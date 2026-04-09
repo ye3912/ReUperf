@@ -22,27 +22,34 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
+        # 安装基础依赖 + GCC-13 (关键修复：Ubuntu 22.04 默认 GCC 11 对 C++20 支持不全)
         sudo apt-get install -y \
           cmake \
           make \
           g++ \
-          nlohmann-json3-dev
+          gcc \
+          nlohmann-json3-dev \
+          gcc-13 \
+          g++-13
         echo "✅ Dependencies installed successfully"
 
-    - name: Configure CMake (force non-Termux)
+    - name: Configure CMake
       run: |
         cd build
+        # 显式指定使用 GCC-13 和 G++-13
         cmake .. \
-          -DCMAKE_C_COMPILER=gcc \
-          -DCMAKE_CXX_COMPILER=g++ \
+          -DCMAKE_C_COMPILER=gcc-13 \
+          -DCMAKE_CXX_COMPILER=g++-13 \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_STATIC=OFF \
-          -DCMAKE_DISABLE_TERMUX_DETECTION=ON
+          -DCMAKE_DISABLE_TERMUX_DETECTION=ON \
+          -DCMAKE_CXX_STANDARD=20
         echo "CMake configuration completed"
 
     - name: Build with verbose output
       run: |
         cd build
+        # 开启详细输出，如果再次失败，能看到具体的报错代码行
         make VERBOSE=1
         echo "✅ Build completed successfully"
 
