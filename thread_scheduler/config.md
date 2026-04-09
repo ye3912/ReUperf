@@ -1,0 +1,212 @@
+# ReUperf 配置说明
+
+## 文件位置
+
+默认路径：`/data/adb/ReUperf/ReUperf.json`
+
+## 配置结构
+
+```json
+{
+  "meta": {
+    "name": "配置名称",
+    "author": "作者"
+  },
+  "modules": {
+    "sched": {
+      "enable": true,
+      "refresh_interval_ms": 100,
+      "log": {
+        "level": "info",
+        "output": "/data/adb/ReUperf/ReUperf.log"
+      },
+      "cpumask": {...},
+      "affinity": {...},
+      "prio": {...},
+      "rules": [...]
+    }
+  }
+}
+```
+
+## 全局参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enable` | bool | true | 启用调度模块 |
+| `refresh_interval_ms` | int | 100 | 前台/顶层进程的刷新间隔（毫秒） |
+| `log.level` | string | "info" | 日志级别：err/warn/info/debug/trace |
+| `log.output` | string | 见下文 | 日志输出文件路径 |
+
+### 日志级别说明
+
+| 级别 | 数值 | 说明 |
+|------|------|------|
+| err | 0 | 仅输出错误信息 |
+| warn | 1 | 输出错误和警告信息 |
+| info | 2 | 输出错误、警告和普通信息 |
+| debug | 3 | 输出除 trace 外的所有信息 |
+| trace | 4 | 输出所有信息 |
+
+### 日志输出路径
+
+默认日志路径：`/data/adb/ReUperf/ReUperf.log`
+
+**注意**：JSON 文件不支持注释，请在单独的文档中记录配置说明。
+
+## cpumask（CPU 核心组）
+
+定义用于亲和性绑定的 CPU 核心组。
+
+```json
+"cpumask": {
+  "all": [0,1,2,3,4,5,6,7],
+  "c0": [0,1,2,3],
+  "c1": [4,5,6],
+  "c2": [7]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| key | string | 组名称（如 "c0"、"c1"、"all"） |
+| value | int[] | CPU 核心 ID 列表 |
+
+## affinity（亲和性类别）
+
+定义各进程状态（bg/fg/top）的 CPU 亲和性。
+
+```json
+"affinity": {
+  "norm": {
+    "bg": "",
+    "fg": "all",
+    "top": "all"
+  },
+  "ui": {
+    "bg": "",
+    "fg": "all",
+    "top": "c1"
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| bg | string | 后台状态的 cpumask 名称，空字符串表示跳过 |
+| fg | string | 前台状态的 cpumask 名称 |
+| top | string | 顶层应用状态的 cpumask 名称 |
+
+**注意**：uperf 的 `touch` 状态会自动转换为 `top`。
+
+## prio（优先级类别）
+
+定义各状态的调度优先级。
+
+```json
+"prio": {
+  "ui": {
+    "bg": -3,
+    "fg": 120,
+    "top": 98
+  }
+}
+```
+
+| 优先级值 | 含义 |
+|----------|------|
+| 0 | 跳过（不更改） |
+| 1-98 | SCHED_FIFO，优先级为该值 |
+| 100-139 | SCHED_NORMAL，nice = value - 120 |
+| -1 | SCHED_NORMAL |
+| -2 | SCHED_BATCH |
+| -3 | SCHED_IDLE |
+
+## rules（进程规则）
+
+匹配进程并应用亲和性/优先级规则。
+
+```json
+"rules": [
+  {
+    "name": "Launcher",
+    "regex": "/HOME_PACKAGE/",
+    "pinned": true,
+    "topfore": false,
+    "rules": [
+      {
+        "k": "/MAIN_THREAD/",
+        "ac": "crit",
+        "pc": "rtusr",
+        "uclamp_max": 1024,
+        "cpu_share": 2048,
+        "enable_limit": true
+      }
+    ]
+  }
+]
+```
+
+### 进程规则字段
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `name` | string | 必填 | 规则名称（用于 cpuctl 路径） |
+| `regex` | string | "." | 进程名正则表达式 |
+| `pinned` | bool | false | 始终视为 TOP 状态 |
+| `topfore` | bool | false | 在前台时视为 TOP 状态 |
+| `rules` | array | [] | 线程规则列表 |
+
+### 线程规则字段
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `k` | string | "." | 线程名正则表达式（keyword） |
+| `ac` | string | "auto" | 亲和性类别名称 |
+| `pc` | string | "auto" | 优先级类别名称 |
+| `uclamp_max` | int | - | uclamp.max 值（0-1024），需 enable_limit |
+| `cpu_share` | int | - | cpu.shares 值，需 enable_limit |
+| `enable_limit` | bool | false | 启用 uclamp/cpu_share 限制 |
+
+## 特殊宏
+
+| 宏 | 替换为 |
+|----|--------|
+| `/HOME_PACKAGE/` | 启动器包名（通过 dumpsys 获取） |
+| `/MAIN_THREAD/` | 进程名（主线程名） |
+
+## 状态判定
+
+| 状态 | 条件 |
+|------|------|
+| TOP | 进程在 `/dev/cpuset/top-app` 或 `pinned=true` 或 (`topfore=true` 且 FG) |
+| FG | 进程在 `/dev/cpuset/foreground` |
+| BG | 其他进程 |
+
+## 示例：限制特定线程
+
+```json
+{
+  "name": "Game",
+  "regex": "^com\\.game\\.",
+  "rules": [
+    {
+      "k": "UnityMain",
+      "ac": "c2",
+      "pc": "rtusr",
+      "uclamp_max": 800,
+      "cpu_share": 512,
+      "enable_limit": true
+    }
+  ]
+}
+```
+
+此配置将 Unity 主线程限制为 uclamp 800/1024 和 512 cpu shares。
+
+## 兼容性
+
+- 兼容 uperf v3 JSON 格式
+- 仅使用 `modules.sched` 部分
+- 忽略 `idle` 和 `boost` 状态
+- `touch` 在内部重命名为 `top`
