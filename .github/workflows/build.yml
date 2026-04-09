@@ -1,0 +1,62 @@
+name: Build Thread Scheduler
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ clang make pkg-config
+
+    - name: Detect environment (Termux or Linux)
+      id: env
+      run: |
+        if [ -d "/data/data/com.termux" ]; then
+          echo "IS_TERMUX=true" >> $GITHUB_ENV
+        else
+          echo "IS_TERMUX=false" >> $GITHUB_ENV
+        fi
+
+    - name: Configure CMake
+      run: |
+        mkdir -p build
+        cd build
+        if [ "$IS_TERMUX" = "true" ]; then
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+        else
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+        fi
+
+    - name: Build project
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Run tests (if any)
+      run: |
+        cd build
+        if [ -f "./thread_scheduler" ]; then
+          echo "✅ Executable built successfully."
+          # ./thread_scheduler  # 如果有测试命令，取消注释
+        else
+          echo "❌ Executable not found!"
+          exit 1
+        fi
+
+    - name: Upload artifact (optional)
+      uses: actions/upload-artifact@v3
+      with:
+        name: thread_scheduler_binary
+        path: build/thread_scheduler
+
