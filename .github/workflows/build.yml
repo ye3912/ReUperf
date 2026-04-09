@@ -8,8 +8,7 @@ on:
 
 jobs:
   build:
-    # 修改点：直接使用 Ubuntu 24.04，它默认自带 GCC 13/14，完美支持 C++20
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout code
@@ -20,6 +19,7 @@ jobs:
         rm -rf build/ CMakeCache.txt CMakeFiles/
         mkdir -p build
 
+    # --- 修改点 1: 安装 GCC-13 ---
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -29,18 +29,21 @@ jobs:
           g++ \
           gcc \
           nlohmann-json3-dev \
-          libfmt-dev # 如果你用了 std::format，通常还需要这个库
+          gcc-13 \
+          g++-13
         echo "✅ Dependencies installed successfully"
 
+    # --- 修改点 2: 强制指定 GCC-13 和 C++20 ---
     - name: Configure CMake
       run: |
         cd build
-        # 不需要手动指定 GCC-13 了，系统默认的就是新版
         cmake .. \
-          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=gcc-13 \
+          -DCMAKE_CXX_COMPILER=g++-13 \
           -DCMAKE_CXX_STANDARD=20 \
-          -DCMAKE_CXX_STANDARD_REQUIRED=ON
-        echo "✅ CMake configuration completed"
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_STATIC=OFF
+        echo "CMake configuration completed"
 
     - name: Build with verbose output
       run: |
