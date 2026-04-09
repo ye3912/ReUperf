@@ -55,7 +55,7 @@ jobs:
         fi
 
     - name: Upload artifact (optional)
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: thread_scheduler_binary
         path: build/thread_scheduler
