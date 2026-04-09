@@ -14,34 +14,54 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Clean and force reconfigure
+    - name: Clean workspace
       run: |
         rm -rf build/ CMakeCache.txt CMakeFiles/
         mkdir -p build
 
-    - name: Install minimal dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           cmake \
           make \
           g++ \
-          nlohmann-json3-dev \  # 修复：Ubuntu 22.04 正确包名
-          libc6-dev \
-          libstdc++-dev
+          nlohmann-json3-dev
+        echo "✅ Dependencies installed successfully"
 
-    - name: Configure CMake (force non-Termux)
+    - name: Configure CMake
       run: |
         cd build
         cmake .. \
           -DCMAKE_C_COMPILER=gcc \
           -DCMAKE_CXX_COMPILER=g++ \
           -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_STATIC=OFF \  # 避免 Termux 特有静态链接逻辑
-          -DCMAKE_DISABLE_FIND_PACKAGE_Termux=ON  # 关键：强制禁用 Termux 特判
+          -DBUILD_STATIC=OFF \
+          -DCMAKE_DISABLE_TERMUX_DETECTION=ON
+        echo "CMake configuration completed"
 
     - name: Build with verbose output
       run: |
         cd build
-        make VERBOSE=1  # 强制输出详细编译日志
+        make VERBOSE=1
+        echo "Build completed"
+
+    - name: Verify executable
+      run: |
+        if [ -f "build/thread_scheduler" ]; then
+          echo "✅ Build successful!"
+          echo "Executable: build/thread_scheduler"
+          ls -lh build/thread_scheduler
+        else
+          echo "❌ Executable not found"
+          find build/ -type f -name "thread_scheduler" || echo "No thread_scheduler file found"
+          exit 1
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: thread-scheduler-bin
+        path: build/thread_scheduler
+        retention-days: 7
 
