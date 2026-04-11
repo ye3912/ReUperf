@@ -147,18 +147,30 @@ private:
         auto& cpuctl = *cpuctl_;
         auto& cache = *cache_;
 
+<<<<<<< HEAD
         auto current_cpus = CpuMask::get_affinity_as_vector(task.tid);
 
+=======
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         bool affinity_changed = false;
         bool sched_changed = false;
 
         if (auto entry = cache.lookup(task.pid, task.tid, task.thread_name, task.state)) {
+<<<<<<< HEAD
             const MatchResult* applied = cache.get_applied_result(task.pid, task.tid);
             if (applied && is_result_equal(*applied, entry->result)) {
                 auto expected_cpus = cpuset.get_cpus_for_affinity(applied->affinity_class, applied->effective_state);
                 affinity_changed = CpuMask::is_affinity_changed(task.tid, expected_cpus);
                 int expected_prio = matcher.get_prio_value(applied->prio_class, applied->effective_state);
                 sched_changed = (expected_prio != 0 && prio.is_sched_changed(task.tid, -1, expected_prio));
+=======
+            auto applied = cache.get_applied_result(task.pid, task.tid);
+            if (applied && is_result_equal(*applied, entry->result)) {
+                auto expected_cpus = cpuset.get_cpus_for_affinity(applied->affinity_class, applied->effective_state);
+                affinity_changed = CpuMask::is_affinity_changed_from_status(task.tid, expected_cpus);
+                int expected_prio = matcher.get_prio_value(applied->prio_class, applied->effective_state);
+                sched_changed = prio.is_sched_changed(task.tid, expected_prio);
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 if (!affinity_changed && !sched_changed) {
                     LOG_T("ScanWorker", name_ + " skipped TID " + std::to_string(task.tid)
                           + " (cached, no change)");
@@ -190,4 +202,8 @@ private:
     }
 };
 
+<<<<<<< HEAD
 #endif
+=======
+#endif
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)

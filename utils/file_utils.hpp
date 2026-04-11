@@ -227,6 +227,7 @@ inline std::string get_process_name(int pid) {
     return comm;
 }
 
+<<<<<<< HEAD
 inline std::string get_thread_name(int pid, int tid) {
     std::string name = read_file("/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/comm");
     // Handle case where thread disappeared during read
@@ -236,6 +237,94 @@ inline std::string get_thread_name(int pid, int tid) {
     return name;
 }
 
+=======
+inline std::string get_process_comm(int pid) {
+    std::string comm = read_file("/proc/" + std::to_string(pid) + "/comm");
+    if (comm.empty()) {
+        return "[dead]";
+    }
+    return comm;
+}
+
+inline std::string get_process_cmdline(int pid) {
+    std::string cmdline = read_file("/proc/" + std::to_string(pid) + "/cmdline");
+    if (!cmdline.empty()) {
+        size_t pos = cmdline.find('\0');
+        if (pos != std::string::npos) cmdline = cmdline.substr(0, pos);
+    }
+    return cmdline;
+}
+
+inline std::string get_thread_comm(int pid, int tid) {
+    std::string comm = read_file("/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/comm");
+    if (comm.empty()) {
+        return "[dead]";
+    }
+    return comm;
+}
+
+inline std::string parse_process_name_from_status(const std::string& status_content) {
+    if (status_content.empty()) {
+        return "[dead]";
+    }
+    size_t start = status_content.find("Name:");
+    if (start == std::string::npos) {
+        return "[dead]";
+    }
+    start += 5;
+    while (start < status_content.size() && (status_content[start] == ' ' || status_content[start] == '\t')) {
+        start++;
+    }
+    size_t end = status_content.find('\n', start);
+    if (end == std::string::npos) {
+        return "[dead]";
+    }
+    return status_content.substr(start, end - start);
+}
+
+inline std::string get_process_name_from_status(int pid) {
+    return parse_process_name_from_status(read_file("/proc/" + std::to_string(pid) + "/status"));
+}
+
+inline std::string get_thread_name_from_sched(int pid, int tid) {
+    std::string sched_path = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/sched";
+    std::string content = read_file(sched_path);
+    if (content.empty()) {
+        return "[dead]";
+    }
+    
+    size_t pos = content.find('\n');
+    if (pos == std::string::npos || pos < 20) {
+        return "[dead]";
+    }
+    
+    std::string first_line = content.substr(0, pos);
+    
+    size_t start = first_line.find('(');
+    size_t end = first_line.rfind(')');
+    
+    if (start == std::string::npos || end == std::string::npos || end <= start + 1) {
+        return "[dead]";
+    }
+    
+    std::string name = first_line.substr(start + 1, end - start - 1);
+    
+    size_t comma_pos = name.find(',');
+    if (comma_pos != std::string::npos) {
+        while (comma_pos > 0 && (name[comma_pos - 1] == ' ' || name[comma_pos - 1] == '\t')) {
+            comma_pos--;
+        }
+        name = name.substr(0, comma_pos);
+    }
+    
+    return name;
+}
+
+inline std::string get_thread_name(int pid, int tid) {
+    return get_thread_comm(pid, tid);
+}
+
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 inline std::string get_cgroup_path(int pid, const std::string& controller) {
     std::string cgroups = read_file("/proc/" + std::to_string(pid) + "/cgroup");
     std::istringstream iss(cgroups);
@@ -283,14 +372,21 @@ inline bool is_system_process(int pid) {
 }
 
 inline std::string get_cgroup_path_cached(int pid, const std::string& controller) {
+<<<<<<< HEAD
     // Performance optimization: cache cgroup path to avoid repeated /proc reads
     // TTL is short (100ms) to handle process lifecycle changes
     static std::unordered_map<int, std::pair<std::string, int64_t>> cache;
+=======
+    static std::unordered_map<std::pair<int, std::string>, std::pair<std::string, int64_t>, 
+        std::hash<std::pair<int, std::string>>> cache;
+    static std::mutex cache_mutex;
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     static constexpr int64_t kCacheTTLMs = 100;
     
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
     
+<<<<<<< HEAD
     auto it = cache.find(pid);
     if (it != cache.end() && (now - it->second.second) < kCacheTTLMs) {
         if (it->second.first.find(controller) != std::string::npos) {
@@ -300,6 +396,18 @@ inline std::string get_cgroup_path_cached(int pid, const std::string& controller
     
     std::string result = get_cgroup_path(pid, controller);
     cache[pid] = {result, now};
+=======
+    std::pair<int, std::string> key = {pid, controller};
+    
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto it = cache.find(key);
+    if (it != cache.end() && (now - it->second.second) < kCacheTTLMs) {
+        return it->second.first;
+    }
+    
+    std::string result = get_cgroup_path(pid, controller);
+    cache[key] = {result, now};
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     return result;
 }
 

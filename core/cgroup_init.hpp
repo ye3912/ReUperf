@@ -58,6 +58,7 @@ private:
         }
         
         std::string base_path = "/dev/cpuset";
+<<<<<<< HEAD
         int created = 0, failed = 0;
         
         // 在根目录创建 ReUperf 组（不受子集 cpus 限制）
@@ -87,6 +88,14 @@ private:
         
         for (const auto& cpumask : config.sched.cpumask) {
             std::string child_path = reuperf_path + "/" + cpumask.first;
+=======
+        std::string root_mems = FileUtils::read_file(base_path + "/mems");
+        int created = 0, failed = 0;
+        
+        // 创建各规则子组，命名格式：ReUperf_<cpumask_name>（例如 ReUperf_all）
+        for (const auto& cpumask : config.sched.cpumask) {
+            std::string child_path = base_path + "/ReUperf_" + cpumask.first;
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             
             if (!FileUtils::mkdir_recursive(child_path)) {
                 LOG_W("CgroupInit", "Failed to create cpuset: " + child_path);

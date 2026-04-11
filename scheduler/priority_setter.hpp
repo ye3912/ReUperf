@@ -2,12 +2,25 @@
 #define PRIORITY_SETTER_HPP
 
 #include <string>
+<<<<<<< HEAD
 #include <sched.h>
 #include <cstring>
 #include <sys/resource.h>
 #include "../config/config_types.hpp"
 #include "../utils/logger.hpp"
 #include "../core/thread_matcher.hpp"
+=======
+#include <sstream>
+#include <cerrno>
+#include <sched.h>
+#include <cstring>
+#include <sys/resource.h>
+#include <optional>
+#include "../config/config_types.hpp"
+#include "../utils/logger.hpp"
+#include "../core/thread_matcher.hpp"
+#include "../utils/file_utils.hpp"
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 
 struct CurrentSched {
     int policy;
@@ -22,6 +35,7 @@ public:
     CurrentSched get_current_sched(int tid) {
         CurrentSched curr;
         curr.policy = sched_getscheduler(tid);
+<<<<<<< HEAD
         if (curr.policy < 0) {
             curr.policy = -1;
             curr.prio = 0;
@@ -41,6 +55,120 @@ public:
         auto curr = get_current_sched(tid);
         if (curr.policy != expected_policy) return true;
         if (curr.policy == SCHED_FIFO || curr.policy == SCHED_RR) {
+=======
+        curr.prio = 0;
+
+        if (curr.policy < 0) {
+            return curr;
+        }
+
+        sched_param param{};
+        if (sched_getparam(tid, &param) == 0) {
+            curr.prio = param.sched_priority;
+        }
+
+        if (curr.policy == normal_policy() || curr.policy == batch_policy() || curr.policy == idle_policy()) {
+            errno = 0;
+            int nice = getpriority(PRIO_PROCESS, tid);
+            if (errno == 0) {
+                curr.prio = nice + 120;
+            }
+        }
+
+        return curr;
+    }
+
+    CurrentSched get_current_sched_from_file(int tid) {
+        CurrentSched curr;
+        curr.policy = -1;
+        curr.prio = 0;
+        
+        std::string sched_path = "/proc/" + std::to_string(tid) + "/sched";
+        std::string content = FileUtils::read_file(sched_path);
+        if (content.empty()) {
+            return curr;
+        }
+        
+        std::istringstream iss(content);
+        std::string line;
+        
+        while (std::getline(iss, line)) {
+            if (line.compare(0, 7, "policy") == 0) {
+                size_t pos = line.find(':');
+                if (pos != std::string::npos) {
+                    std::string value = line.substr(pos + 1);
+                    size_t start = 0;
+                    while (start < value.size() && (value[start] == ' ' || value[start] == '\t')) {
+                        start++;
+                    }
+                    try {
+                        curr.policy = std::stoi(value.substr(start));
+                    } catch (...) {
+                        curr.policy = -1;
+                    }
+                }
+            } else if (line.compare(0, 5, "prio") == 0) {
+                size_t pos = line.find(':');
+                if (pos != std::string::npos) {
+                    std::string value = line.substr(pos + 1);
+                    size_t start = 0;
+                    while (start < value.size() && (value[start] == ' ' || value[start] == '\t')) {
+                        start++;
+                    }
+                    try {
+                        curr.prio = std::stoi(value.substr(start));
+                    } catch (...) {
+                        curr.prio = 0;
+                    }
+                }
+            }
+            
+            if (curr.policy >= 0 && curr.prio > 0) {
+                break;
+            }
+        }
+        
+        return curr;
+    }
+
+    static std::optional<int> expected_policy_for_priority(int expected_prio) {
+        if (expected_prio == 0) {
+            return std::nullopt;
+        }
+        if (expected_prio >= 1 && expected_prio <= 98) {
+            return SCHED_FIFO;
+        }
+        if (expected_prio >= 100 && expected_prio <= 139) {
+            return normal_policy();
+        }
+        if (expected_prio == -1) {
+            return normal_policy();
+        }
+        if (expected_prio == -2) {
+            return batch_policy();
+        }
+        if (expected_prio == -3) {
+            return idle_policy();
+        }
+        return std::nullopt;
+    }
+
+    bool is_sched_changed(int tid, int expected_prio) {
+        auto curr = get_current_sched(tid);
+        if (curr.policy < 0) {
+            return true;
+        }
+
+        const auto expected_policy = expected_policy_for_priority(expected_prio);
+        if (expected_policy && curr.policy != *expected_policy) {
+            return true;
+        }
+
+        if (expected_prio >= 1 && expected_prio <= 98) {
+            return curr.prio != expected_prio;
+        }
+        if (expected_prio >= 100 && expected_prio <= 139) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             return curr.prio != expected_prio;
         }
         return false;
@@ -76,7 +204,11 @@ public:
                   + " to SCHED_FIFO prio=" + std::to_string(prio_value));
         } else if (prio_value >= 100 && prio_value <= 139) {
             param.sched_priority = 0;
+<<<<<<< HEAD
             if (sched_setscheduler(tid, SCHED_NORMAL, &param) != 0) {
+=======
+            if (sched_setscheduler(tid, normal_policy(), &param) != 0) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_NORMAL for tid " 
                       + std::to_string(tid));
                 return false;
@@ -86,7 +218,11 @@ public:
                   + " to SCHED_NORMAL nice=" + std::to_string(prio_value - 120));
         } else if (prio_value == -1) {
             param.sched_priority = 0;
+<<<<<<< HEAD
             if (sched_setscheduler(tid, SCHED_NORMAL, &param) != 0) {
+=======
+            if (sched_setscheduler(tid, normal_policy(), &param) != 0) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_NORMAL for tid " 
                       + std::to_string(tid));
                 return false;
@@ -94,7 +230,11 @@ public:
             LOG_T("PrioritySetter", "Set tid " + std::to_string(tid) + " to SCHED_NORMAL");
         } else if (prio_value == -2) {
             param.sched_priority = 0;
+<<<<<<< HEAD
             if (sched_setscheduler(tid, SCHED_BATCH, &param) != 0) {
+=======
+            if (sched_setscheduler(tid, batch_policy(), &param) != 0) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_BATCH for tid " 
                       + std::to_string(tid));
                 return false;
@@ -102,7 +242,11 @@ public:
             LOG_T("PrioritySetter", "Set tid " + std::to_string(tid) + " to SCHED_BATCH");
         } else if (prio_value == -3) {
             param.sched_priority = 0;
+<<<<<<< HEAD
             if (sched_setscheduler(tid, SCHED_IDLE, &param) != 0) {
+=======
+            if (sched_setscheduler(tid, idle_policy(), &param) != 0) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_IDLE for tid " 
                       + std::to_string(tid));
                 return false;
@@ -134,6 +278,33 @@ public:
 
 private:
     ThreadMatcher& matcher_;
+<<<<<<< HEAD
+=======
+
+    static int normal_policy() {
+#ifdef SCHED_NORMAL
+        return SCHED_NORMAL;
+#else
+        return SCHED_OTHER;
+#endif
+    }
+
+    static int batch_policy() {
+#ifdef SCHED_BATCH
+        return SCHED_BATCH;
+#else
+        return normal_policy();
+#endif
+    }
+
+    static int idle_policy() {
+#ifdef SCHED_IDLE
+        return SCHED_IDLE;
+#else
+        return normal_policy();
+#endif
+    }
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     
     bool set_nice_value(int tid, int nice) {
         if (setpriority(PRIO_PROCESS, tid, nice) != 0) {

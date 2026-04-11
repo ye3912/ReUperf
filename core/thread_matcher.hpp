@@ -7,6 +7,10 @@
 #include <optional>
 #include <unordered_map>
 #include <chrono>
+<<<<<<< HEAD
+=======
+#include <mutex>
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 #include "../config/config_types.hpp"
 #include "../utils/logger.hpp"
 
@@ -137,7 +141,11 @@ public:
 
         // Cache key: use proc_name, thread_name and cmdline for accuracy
         std::string cache_key = proc_name + "#|#" + thread_name + "#|#" + cmdline;
+<<<<<<< HEAD
         if (auto* cached = get_cached_process_result(cache_key)) {
+=======
+        if (auto cached = get_cached_process_result(cache_key)) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             result.matched = true;
             result.matched_rule_name = cached->matched_rule_name;
             result.affinity_class = cached->affinity_class;
@@ -252,7 +260,11 @@ public:
 
         // Cache key: use proc_name, thread_name and cmdline (thread_name as "process_only" identifier)
         std::string cache_key = proc_name + "#|#" + thread_name + "#|#" + cmdline;
+<<<<<<< HEAD
         if (auto* cached = get_cached_process_result(cache_key)) {
+=======
+        if (auto cached = get_cached_process_result(cache_key)) {
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             result.matched = true;
             result.matched_rule_name = cached->matched_rule_name;
             result.affinity_class = cached->affinity_class;
@@ -466,17 +478,30 @@ private:
 
     static constexpr int64_t kProcessCacheTTLMs = 100;
     std::unordered_map<std::string, ProcessCacheEntry> process_cache_;
+<<<<<<< HEAD
 
     void clear_process_cache() {
         process_cache_.clear();
     }
 
     ProcessCacheEntry* get_cached_process_result(const std::string& proc_name) {
+=======
+    mutable std::mutex process_cache_mutex_;
+
+    void clear_process_cache() {
+        std::lock_guard<std::mutex> lock(process_cache_mutex_);
+        process_cache_.clear();
+    }
+
+    std::optional<ProcessCacheEntry> get_cached_process_result(const std::string& proc_name) {
+        std::lock_guard<std::mutex> lock(process_cache_mutex_);
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         auto it = process_cache_.find(proc_name);
         if (it != process_cache_.end()) {
             auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - it->second.timestamp).count();
             if (elapsed_ms < kProcessCacheTTLMs) {
+<<<<<<< HEAD
                 return &it->second;
             }
         }
@@ -484,6 +509,16 @@ private:
     }
 
     void cache_process_result(const std::string& proc_name, const ProcessCacheEntry& entry) {
+=======
+                return it->second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    void cache_process_result(const std::string& proc_name, const ProcessCacheEntry& entry) {
+        std::lock_guard<std::mutex> lock(process_cache_mutex_);
+>>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         process_cache_[proc_name] = entry;
     }
 };
