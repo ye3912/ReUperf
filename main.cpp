@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/inotify.h>
+#include <poll.h>
 #endif
 #include <memory>
 #include <ctime>
@@ -23,6 +25,7 @@
 #include "core/launcher_finder.hpp"
 #include "core/process_scanner.hpp"
 #include "core/cpuset_monitor.hpp"
+#include "core/event_router.hpp"
 #include "core/thread_matcher.hpp"
 #include "core/thread_cache.hpp"
 #include "core/scan_worker.hpp"
@@ -35,13 +38,13 @@ namespace {
     std::atomic<bool> cgroup_changed(false);
     std::atomic<bool> full_rescan_needed(true);
     std::atomic<bool> shutdown_requested(false);
+    std::shared_ptr<EventRouter> g_event_router;
 }
 
 void signal_handler(int sig) {
     (void)sig;
     running.store(false, std::memory_order_seq_cst);
     shutdown_requested.store(true, std::memory_order_seq_cst);
-    std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
 void ensure_data_dir() {
@@ -77,6 +80,91 @@ uint64_t compute_config_hash(const std::string& path) {
     return hash;
 }
 
+class ConfigFileWatcher {
+public:
+    explicit ConfigFileWatcher(const std::string& config_path)
+        : config_path_(config_path), inotify_fd_(-1), watch_fd_(-1), config_changed_(false) {}
+
+    ~ConfigFileWatcher() {
+        stop();
+    }
+
+    bool start() {
+#ifdef __linux__
+        inotify_fd_ = inotify_init();
+        if (inotify_fd_ < 0) {
+            LOG_W("ConfigFileWatcher", "inotify_init failed: " + std::string(strerror(errno)));
+            return false;
+        }
+
+        size_t dir_pos = config_path_.rfind('/');
+        std::string dir = (dir_pos != std::string::npos) ? config_path_.substr(0, dir_pos) : ".";
+        std::string basename = (dir_pos != std::string::npos) ? config_path_.substr(dir_pos + 1) : config_path_;
+
+        watch_fd_ = inotify_add_watch(inotify_fd_, dir.c_str(), IN_MODIFY);
+        if (watch_fd_ < 0) {
+            LOG_W("ConfigFileWatcher", "inotify_add_watch failed: " + std::string(strerror(errno)));
+            close(inotify_fd_);
+            inotify_fd_ = -1;
+            return false;
+        }
+
+        LOG_I("ConfigFileWatcher", "Watching config: " + config_path_);
+        watch_basename_ = basename;
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    void stop() {
+#ifdef __linux__
+        if (inotify_fd_ >= 0) {
+            close(inotify_fd_);
+            inotify_fd_ = -1;
+            watch_fd_ = -1;
+        }
+#endif
+    }
+
+    bool check_and_clear() {
+#ifdef __linux__
+        if (inotify_fd_ < 0) {
+            return false;
+        }
+
+        char buf[1024];
+        ssize_t len = read(inotify_fd_, buf, sizeof(buf));
+        if (len > 0) {
+            for (ssize_t i = 0; i < len; ) {
+                struct inotify_event* event = reinterpret_cast<struct inotify_event*>(&buf[i]);
+                if (event->len > 0 && watch_basename_.compare(0, std::string::npos, event->name, event->len) == 0) {
+                    if (event->mask & IN_MODIFY) {
+                        LOG_D("ConfigFileWatcher", "Config file modified");
+                        return config_changed_.exchange(true, std::memory_order_acq_rel);
+                    }
+                }
+                i += sizeof(struct inotify_event) + event->len;
+            }
+        }
+        return config_changed_.exchange(false, std::memory_order_acq_rel);
+#else
+        return false;
+#endif
+    }
+
+    void clear_flag() {
+        config_changed_.store(false, std::memory_order_release);
+    }
+
+private:
+    std::string config_path_;
+    std::string watch_basename_;
+    int inotify_fd_;
+    int watch_fd_;
+    std::atomic<bool> config_changed_;
+};
+
 template<typename T>
 class PidCache {
 public:
@@ -85,16 +173,12 @@ public:
         pids_ = pids;
     }
 
-<<<<<<< HEAD
-    const std::set<int>& get() const {
-=======
     std::set<int> get() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return pids_;
     }
 
     std::set<int> snapshot() const {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         std::lock_guard<std::mutex> lock(mutex_);
         return pids_;
     }
@@ -129,26 +213,14 @@ void scan_and_update_rule_cache(ThreadMatcher& matcher,
     auto all_pids = FileUtils::list_pids();
     
     for (int pid : all_pids) {
-<<<<<<< HEAD
-        std::string proc_name = FileUtils::get_process_name(pid);
-=======
         std::string proc_name = FileUtils::get_process_name_from_status(pid);
         
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         if (proc_name == "[dead]") {
             dead_pids.insert(pid);
             continue;
         }
 
-<<<<<<< HEAD
-        std::string cmdline = FileUtils::read_file("/proc/" + std::to_string(pid) + "/cmdline");
-        if (!cmdline.empty()) {
-            size_t pos = cmdline.find('\0');
-            if (pos != std::string::npos) cmdline = cmdline.substr(0, pos);
-        }
-=======
         std::string cmdline = FileUtils::get_process_cmdline(pid);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 
         MatchResult result = matcher.match_process_only(proc_name, proc_name, ProcessState::BG, pid, cmdline);
 
@@ -176,21 +248,10 @@ inline void dispatch_pids_to_workers(
     for (int pid : pids) {
         int worker_idx = pid % workers.size();
         
-<<<<<<< HEAD
-        std::string proc_name = FileUtils::get_process_name(pid);
-        if (proc_name == "[dead]") continue;
-
-        std::string cmdline = FileUtils::read_file("/proc/" + std::to_string(pid) + "/cmdline");
-        if (!cmdline.empty()) {
-            size_t pos = cmdline.find('\0');
-            if (pos != std::string::npos) cmdline = cmdline.substr(0, pos);
-        }
-=======
         std::string proc_name = FileUtils::get_process_name_from_status(pid);
         if (proc_name == "[dead]") continue;
 
         std::string cmdline = FileUtils::get_process_cmdline(pid);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 
         if (skip_topapp_cgroup) {
             std::string cgroup = FileUtils::get_cgroup_path_cached(pid, "cpuset");
@@ -222,22 +283,14 @@ inline void dispatch_pids_to_workers(
 inline void dispatch_pinned_to_workers(std::vector<std::unique_ptr<ScanWorker>>& workers,
                                   const std::set<int>& pids,
                                   std::set<int>& processed_tids) {
-<<<<<<< HEAD
-    static const std::string CPUSET_BASE = "/dev/cpuset/ReUperf";
-=======
     static const std::string CPUSET_BASE = "/dev/cpuset";
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     dispatch_pids_to_workers(workers, pids, ProcessState::TOP, CPUSET_BASE, processed_tids, false);
 }
 
 inline void dispatch_topfore_to_workers(std::vector<std::unique_ptr<ScanWorker>>& workers,
                                    const std::set<int>& pids,
                                    std::set<int>& processed_tids) {
-<<<<<<< HEAD
-    static const std::string CPUSET_BASE = "/dev/cpuset/ReUperf";
-=======
     static const std::string CPUSET_BASE = "/dev/cpuset";
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     dispatch_pids_to_workers(workers, pids, ProcessState::FG, CPUSET_BASE, processed_tids, true);
 }
 
@@ -247,11 +300,7 @@ inline void dispatch_fg_top_to_workers(std::vector<std::unique_ptr<ScanWorker>>&
     auto processes = scanner.scan_fg_top();
     if (processes.empty()) return;
 
-<<<<<<< HEAD
-    static const std::string CPUSET_BASE = "/dev/cpuset/ReUperf";
-=======
     static const std::string CPUSET_BASE = "/dev/cpuset";
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 
     for (const auto& info : processes) {
         int worker_idx = info.pid % workers.size();
@@ -263,10 +312,7 @@ inline void dispatch_fg_top_to_workers(std::vector<std::unique_ptr<ScanWorker>>&
         }
 
         for (int tid : info.tids) {
-<<<<<<< HEAD
-=======
             if (processed_tids.count(tid) > 0) continue;
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             auto it = info.thread_names.find(tid);
             if (it == info.thread_names.end()) continue;
             const std::string& thread_name = it->second;
@@ -357,21 +403,12 @@ int main(int /*argc*/, char* argv[]) {
         return 1;
     }
     
-<<<<<<< HEAD
-    auto matcher = std::make_unique<ThreadMatcher>(config);
-    auto scanner = std::make_unique<ProcessScanner>();
-    auto cpuset = std::make_unique<CpusetSetter>(*matcher);
-    auto prio = std::make_unique<PrioritySetter>(*matcher);
-    auto cpuctl = std::make_unique<CpuctlSetter>();
-    auto cache = std::make_unique<ThreadCache>();
-=======
     auto matcher_ptr = std::make_shared<ThreadMatcher>(config);
     auto scanner_ptr = std::make_shared<ProcessScanner>();
     auto cpuset_ptr = std::make_shared<CpusetSetter>(*matcher_ptr);
     auto prio_ptr = std::make_shared<PrioritySetter>(*matcher_ptr);
     auto cpuctl_ptr = std::make_shared<CpuctlSetter>();
     auto cache_ptr = std::make_shared<ThreadCache>();
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     auto pinned_cache = std::make_unique<PinnedCache>();
     auto topfore_cache = std::make_unique<TopForeCache>();
     
@@ -383,15 +420,6 @@ int main(int /*argc*/, char* argv[]) {
     workers.push_back(std::make_unique<ScanWorker>("ScanWorker3"));
     workers.push_back(std::make_unique<ScanWorker>("ScanWorker4"));
     
-<<<<<<< HEAD
-    std::shared_ptr<ThreadMatcher> matcher_ptr(matcher.get(), [](ThreadMatcher*){});
-    std::shared_ptr<CpusetSetter> cpuset_ptr(cpuset.get(), [](CpusetSetter*){});
-    std::shared_ptr<PrioritySetter> prio_ptr(prio.get(), [](PrioritySetter*){});
-    std::shared_ptr<CpuctlSetter> cpuctl_ptr(cpuctl.get(), [](CpuctlSetter*){});
-    std::shared_ptr<ThreadCache> cache_ptr(cache.get(), [](ThreadCache*){});
-    
-=======
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     for (auto& w : workers) {
         w->set_configs(matcher_ptr, cpuset_ptr, prio_ptr, cpuctl_ptr, cache_ptr);
         w->start();
@@ -402,40 +430,54 @@ int main(int /*argc*/, char* argv[]) {
         std::set<int> pinned_pids;
         std::set<int> topfore_pids;
         
-<<<<<<< HEAD
-        scan_and_update_rule_cache(*matcher, pinned_pids, topfore_pids, dead_pids);
-        pinned_cache->update(pinned_pids);
-        topfore_cache->update(topfore_pids);
-        cleanup_dead_pids(*cache, *pinned_cache, *topfore_cache, dead_pids, pinned_pids, topfore_pids);
-=======
         scan_and_update_rule_cache(*matcher_ptr, pinned_pids, topfore_pids, dead_pids);
         pinned_cache->update(pinned_pids);
         topfore_cache->update(topfore_pids);
         cleanup_dead_pids(*cache_ptr, *pinned_cache, *topfore_cache, dead_pids, pinned_pids, topfore_pids);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         
         std::set<int> processed;
         dispatch_pinned_to_workers(workers, pinned_pids, processed);
         dispatch_topfore_to_workers(workers, topfore_pids, processed);
-<<<<<<< HEAD
-        dispatch_fg_top_to_workers(workers, *scanner, processed);
-=======
         dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+    
+    g_event_router = std::make_shared<EventRouter>(50);
     
     ProcMonitor monitor;
     monitor.start([&](int pid) {
         if (pid > 0) {
             LOG_D("Main", "Process created: " + std::to_string(pid));
+            g_event_router->on_process_created(pid);
         } else if (pid < 0) {
             LOG_D("Main", "Process exited: " + std::to_string(-pid));
+            g_event_router->on_process_exited(-pid);
         }
         cgroup_changed.store(true, std::memory_order_release);
     });
     
+    g_event_router->start([&](const std::set<int>& new_pids, const std::set<int>& dead_pids) {
+        (void)dead_pids;
+        for (int pid : new_pids) {
+            if (pid > 0) {
+                LOG_I("Main", "Incremental dispatch for new pid: " + std::to_string(pid));
+                std::set<int> single_pid = {pid};
+                std::set<int> processed;
+                dispatch_pinned_to_workers(workers, single_pid, processed);
+                dispatch_topfore_to_workers(workers, single_pid, processed);
+                dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
+            }
+        }
+        for (int pid : dead_pids) {
+            LOG_I("Main", "Cleaning up dead pid: " + std::to_string(pid));
+            cache_ptr->remove(pid);
+        }
+    });
+    
+    ConfigFileWatcher config_watcher(config_path);
+    config_watcher.start();
+
     time_t last_mtime = get_file_mtime(config_path);
     uint64_t last_config_hash = compute_config_hash(config_path);
     LOG_I("Main", "Initial config hash: " + std::to_string(last_config_hash));
@@ -452,16 +494,22 @@ int main(int /*argc*/, char* argv[]) {
     
     while (running) {
         try {
-        time_t current_mtime = get_file_mtime(config_path);
-        uint64_t current_hash = compute_config_hash(config_path);
-        
-        if ((current_mtime != last_mtime && current_mtime > 0) || 
-            (current_hash != last_config_hash && current_hash != 0)) {
-            last_mtime = current_mtime;
-            last_config_hash = current_hash;
-            
-            LOG_I("Main", "Config file changed (mtime=" + std::to_string(current_mtime) 
-                  + ", hash=" + std::to_string(current_hash) + "), reloading...");
+        bool config_changed_inotify = config_watcher.check_and_clear();
+        bool config_changed_fallback = false;
+
+        if (!config_changed_inotify) {
+            time_t current_mtime = get_file_mtime(config_path);
+            uint64_t current_hash = compute_config_hash(config_path);
+            config_changed_fallback = (current_mtime != last_mtime && current_mtime > 0) ||
+                                     (current_hash != last_config_hash && current_hash != 0);
+            if (config_changed_fallback) {
+                last_mtime = current_mtime;
+                last_config_hash = current_hash;
+            }
+        }
+
+        if (config_changed_inotify || config_changed_fallback) {
+            LOG_I("Main", "Config file changed, reloading...");
             
             try {
                 Config new_config = ConfigParser::parse(config_path);
@@ -478,26 +526,6 @@ int main(int /*argc*/, char* argv[]) {
                         LOG_E("Main", "Cgroup initialization failed");
                     }
                     
-<<<<<<< HEAD
-                    matcher = std::make_unique<ThreadMatcher>(config);
-                    scanner = std::make_unique<ProcessScanner>();
-                    cpuset = std::make_unique<CpusetSetter>(*matcher);
-                    prio = std::make_unique<PrioritySetter>(*matcher);
-                    cpuctl = std::make_unique<CpuctlSetter>();
-                    cache->clear();
-                    pinned_cache->clear();
-                    topfore_cache->clear();
-                    
-                    std::shared_ptr<ThreadMatcher> matcher_ptr(matcher.get(), [](ThreadMatcher*){});
-                    std::shared_ptr<CpusetSetter> cpuset_ptr(cpuset.get(), [](CpusetSetter*){});
-                    std::shared_ptr<PrioritySetter> prio_ptr(prio.get(), [](PrioritySetter*){});
-                    std::shared_ptr<CpuctlSetter> cpuctl_ptr(cpuctl.get(), [](CpuctlSetter*){});
-                    std::shared_ptr<ThreadCache> cache_ptr(cache.get(), [](ThreadCache*){});
-                    
-                    for (auto& w : workers) {
-                        w->stop();
-                    }
-=======
                     for (auto& w : workers) {
                         w->stop();
                     }
@@ -512,14 +540,11 @@ int main(int /*argc*/, char* argv[]) {
                     pinned_cache->clear();
                     topfore_cache->clear();
 
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                     workers.clear();
                     workers.push_back(std::make_unique<ScanWorker>("ScanWorker1"));
                     workers.push_back(std::make_unique<ScanWorker>("ScanWorker2"));
                     workers.push_back(std::make_unique<ScanWorker>("ScanWorker3"));
                     workers.push_back(std::make_unique<ScanWorker>("ScanWorker4"));
-<<<<<<< HEAD
-=======
 
                     matcher_ptr = std::move(new_matcher);
                     scanner_ptr = std::move(new_scanner);
@@ -527,7 +552,6 @@ int main(int /*argc*/, char* argv[]) {
                     prio_ptr = std::move(new_prio);
                     cpuctl_ptr = std::move(new_cpuctl);
 
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                     for (auto& w : workers) {
                         w->set_configs(matcher_ptr, cpuset_ptr, prio_ptr, cpuctl_ptr, cache_ptr);
                         w->start();
@@ -574,20 +598,6 @@ int main(int /*argc*/, char* argv[]) {
             std::set<int> pinned_pids;
             std::set<int> topfore_pids;
             
-<<<<<<< HEAD
-            scan_and_update_rule_cache(*matcher, pinned_pids, topfore_pids, dead_pids);
-            pinned_cache->update(pinned_pids);
-            topfore_cache->update(topfore_pids);
-            cleanup_dead_pids(*cache, *pinned_cache, *topfore_cache, dead_pids, pinned_pids, topfore_pids);
-            
-            dispatch_pinned_to_workers(workers, pinned_pids, processed);
-            dispatch_topfore_to_workers(workers, topfore_pids, processed);
-            dispatch_fg_top_to_workers(workers, *scanner, processed);
-        } else {
-            dispatch_pinned_to_workers(workers, pinned_cache->get(), processed);
-            dispatch_topfore_to_workers(workers, topfore_cache->get(), processed);
-            dispatch_fg_top_to_workers(workers, *scanner, processed);
-=======
             scan_and_update_rule_cache(*matcher_ptr, pinned_pids, topfore_pids, dead_pids);
             pinned_cache->update(pinned_pids);
             topfore_cache->update(topfore_pids);
@@ -600,7 +610,6 @@ int main(int /*argc*/, char* argv[]) {
             dispatch_pinned_to_workers(workers, pinned_cache->snapshot(), processed);
             dispatch_topfore_to_workers(workers, topfore_cache->snapshot(), processed);
             dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         }
         
         std::this_thread::sleep_for(std::chrono::milliseconds(highspeed_ms));
@@ -617,6 +626,7 @@ int main(int /*argc*/, char* argv[]) {
     }
     
     monitor.stop();
+    g_event_router->stop();
     
     for (auto& w : workers) {
         w->stop();

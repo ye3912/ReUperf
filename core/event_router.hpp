@@ -128,7 +128,7 @@ private:
             
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                cv_.wait_for(lock, std::chrono::milliseconds(50), [this]() {
+                cv_.wait_for(lock, std::chrono::milliseconds(throttle_ms_), [this]() {
                     return !running_.load() || !event_queue_.empty();
                 });
                 

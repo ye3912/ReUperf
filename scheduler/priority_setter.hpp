@@ -2,14 +2,6 @@
 #define PRIORITY_SETTER_HPP
 
 #include <string>
-<<<<<<< HEAD
-#include <sched.h>
-#include <cstring>
-#include <sys/resource.h>
-#include "../config/config_types.hpp"
-#include "../utils/logger.hpp"
-#include "../core/thread_matcher.hpp"
-=======
 #include <sstream>
 #include <cerrno>
 #include <sched.h>
@@ -20,7 +12,6 @@
 #include "../utils/logger.hpp"
 #include "../core/thread_matcher.hpp"
 #include "../utils/file_utils.hpp"
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 
 struct CurrentSched {
     int policy;
@@ -35,27 +26,6 @@ public:
     CurrentSched get_current_sched(int tid) {
         CurrentSched curr;
         curr.policy = sched_getscheduler(tid);
-<<<<<<< HEAD
-        if (curr.policy < 0) {
-            curr.policy = -1;
-            curr.prio = 0;
-            return curr;
-        }
-
-        struct sched_param param;
-        if (sched_getparam(tid, &param) == 0) {
-            curr.prio = param.sched_priority;
-        } else {
-            curr.prio = 0;
-        }
-        return curr;
-    }
-
-    bool is_sched_changed(int tid, int expected_policy, int expected_prio) {
-        auto curr = get_current_sched(tid);
-        if (curr.policy != expected_policy) return true;
-        if (curr.policy == SCHED_FIFO || curr.policy == SCHED_RR) {
-=======
         curr.prio = 0;
 
         if (curr.policy < 0) {
@@ -168,7 +138,6 @@ public:
             return curr.prio != expected_prio;
         }
         if (expected_prio >= 100 && expected_prio <= 139) {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             return curr.prio != expected_prio;
         }
         return false;
@@ -204,11 +173,7 @@ public:
                   + " to SCHED_FIFO prio=" + std::to_string(prio_value));
         } else if (prio_value >= 100 && prio_value <= 139) {
             param.sched_priority = 0;
-<<<<<<< HEAD
-            if (sched_setscheduler(tid, SCHED_NORMAL, &param) != 0) {
-=======
             if (sched_setscheduler(tid, normal_policy(), &param) != 0) {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_NORMAL for tid " 
                       + std::to_string(tid));
                 return false;
@@ -218,11 +183,7 @@ public:
                   + " to SCHED_NORMAL nice=" + std::to_string(prio_value - 120));
         } else if (prio_value == -1) {
             param.sched_priority = 0;
-<<<<<<< HEAD
-            if (sched_setscheduler(tid, SCHED_NORMAL, &param) != 0) {
-=======
             if (sched_setscheduler(tid, normal_policy(), &param) != 0) {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_NORMAL for tid " 
                       + std::to_string(tid));
                 return false;
@@ -230,11 +191,7 @@ public:
             LOG_T("PrioritySetter", "Set tid " + std::to_string(tid) + " to SCHED_NORMAL");
         } else if (prio_value == -2) {
             param.sched_priority = 0;
-<<<<<<< HEAD
-            if (sched_setscheduler(tid, SCHED_BATCH, &param) != 0) {
-=======
             if (sched_setscheduler(tid, batch_policy(), &param) != 0) {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_BATCH for tid " 
                       + std::to_string(tid));
                 return false;
@@ -242,11 +199,7 @@ public:
             LOG_T("PrioritySetter", "Set tid " + std::to_string(tid) + " to SCHED_BATCH");
         } else if (prio_value == -3) {
             param.sched_priority = 0;
-<<<<<<< HEAD
-            if (sched_setscheduler(tid, SCHED_IDLE, &param) != 0) {
-=======
             if (sched_setscheduler(tid, idle_policy(), &param) != 0) {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
                 LOG_W("PrioritySetter", "Failed to set SCHED_IDLE for tid " 
                       + std::to_string(tid));
                 return false;
@@ -278,8 +231,6 @@ public:
 
 private:
     ThreadMatcher& matcher_;
-<<<<<<< HEAD
-=======
 
     static int normal_policy() {
 #ifdef SCHED_NORMAL
@@ -304,7 +255,6 @@ private:
         return normal_policy();
 #endif
     }
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     
     bool set_nice_value(int tid, int nice) {
         if (setpriority(PRIO_PROCESS, tid, nice) != 0) {

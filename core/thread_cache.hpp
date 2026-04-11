@@ -66,24 +66,14 @@ public:
         }
     }
 
-<<<<<<< HEAD
-    const MatchResult* get_applied_result(int pid, int tid) const {
-=======
     std::optional<MatchResult> get_applied_result(int pid, int tid) const {
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         std::lock_guard<std::mutex> lock(mutex_);
         auto key = std::make_pair(pid, tid);
         auto it = cache_.find(key);
         if (it != cache_.end()) {
-<<<<<<< HEAD
-            return &it->second.applied_result;
-        }
-        return nullptr;
-=======
             return it->second.applied_result;
         }
         return std::nullopt;
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
     }
 
     void update_applied_result(int pid, int tid, const MatchResult& result) {

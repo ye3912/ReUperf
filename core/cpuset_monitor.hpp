@@ -14,6 +14,7 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <poll.h>
 #include "../utils/logger.hpp"
 #include "../utils/file_utils.hpp"
 
@@ -41,11 +42,6 @@ public:
             return false;
         }
 
-        int flags = fcntl(inotify_fd_, F_GETFL, 0);
-        if (flags >= 0) {
-            fcntl(inotify_fd_, F_SETFL, flags | O_NONBLOCK);
-        }
-        
         int wd = inotify_add_watch(inotify_fd_, "/proc", IN_CREATE | IN_DELETE | IN_ISDIR);
         if (wd < 0) {
             LOG_W("ProcMonitor", "Failed to watch /proc: " + std::string(strerror(errno)));
@@ -60,7 +56,10 @@ public:
         thread_ = std::thread(&ProcMonitor::monitor_loop, this);
         
         #ifdef __linux__
-        pthread_setname_np(thread_.native_handle(), "ProcMonitor");
+        int ret = pthread_setname_np(thread_.native_handle(), "ProcMonitor");
+        if (ret != 0) {
+            LOG_W("ProcMonitor", "Failed to set thread name: " + std::string(strerror(ret)));
+        }
         #endif
         
         LOG_I("ProcMonitor", "Started monitoring /proc changes");
@@ -102,12 +101,22 @@ private:
         constexpr size_t EVENT_SIZE = sizeof(struct inotify_event);
         constexpr size_t BUF_LEN = 4096 * (EVENT_SIZE + 16);
         char buf[BUF_LEN];
-        
+        struct pollfd pfd = {inotify_fd_, POLLIN, 0};
+
         while (running_.load()) {
+            int ret = poll(&pfd, 1, 100);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                LOG_E("ProcMonitor", "poll error: " + std::string(strerror(errno)));
+                break;
+            }
+            if (ret == 0) {
+                continue;
+            }
+
             ssize_t len = read(inotify_fd_, buf, BUF_LEN);
             if (len < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    usleep(10000);
                     continue;
                 }
                 LOG_E("ProcMonitor", "read error: " + std::string(strerror(errno)));

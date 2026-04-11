@@ -69,12 +69,7 @@ public:
             return true;
         }
         
-<<<<<<< HEAD
-        // 统一使用根目录 /dev/cpuset/ReUperf/，不受子集 cpus 限制
-        std::string path = "/dev/cpuset/ReUperf/" + cpumask_name;
-=======
         std::string path = "/dev/cpuset/ReUperf_" + cpumask_name;
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         
         std::lock_guard<std::mutex> lock(mutex_);
         
@@ -92,12 +87,6 @@ public:
             }
         }
         
-<<<<<<< HEAD
-        std::string parent_path = "/dev/cpuset/ReUperf";
-        write_cgroup_procs_silent(parent_path + "/cgroup.procs", tid);
-        
-=======
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         if (!FileUtils::write_file(path + "/cgroup.procs", std::to_string(tid))) {
             LOG_W("CpusetSetter", "Failed to move tid " + std::to_string(tid) + " to " + path);
             return false;

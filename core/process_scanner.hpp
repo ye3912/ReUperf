@@ -31,12 +31,8 @@ public:
         for (int pid : pids) {
             ProcessInfo info;
             info.pid = pid;
-<<<<<<< HEAD
-            info.name = FileUtils::get_process_name(pid);
-=======
             info.name = FileUtils::get_process_name_from_status(pid);
             
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             info.state = determine_state(pid);
             
             auto tids = FileUtils::list_tids(pid);
@@ -66,11 +62,7 @@ public:
                 continue;
             }
             
-<<<<<<< HEAD
-            std::string proc_name = FileUtils::get_process_name(pid);
-=======
             std::string proc_name = FileUtils::get_process_name_from_status(pid);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
             if (proc_name == "[dead]") continue;
             
             ProcessInfo info;
@@ -153,8 +145,4 @@ private:
     }
 };
 
-<<<<<<< HEAD
 #endif
-=======
-#endif
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)

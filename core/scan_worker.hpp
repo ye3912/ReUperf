@@ -141,36 +141,27 @@ private:
     }
     
     void process_dispatch_task(const DispatchTask& task) {
-        auto& matcher = *matcher_;
-        auto& cpuset = *cpuset_;
-        auto& prio = *prio_;
-        auto& cpuctl = *cpuctl_;
-        auto& cache = *cache_;
+        auto matcher = matcher_;
+        auto cpuset = cpuset_;
+        auto prio = prio_;
+        auto cpuctl = cpuctl_;
+        auto cache = cache_;
 
-<<<<<<< HEAD
-        auto current_cpus = CpuMask::get_affinity_as_vector(task.tid);
+        if (!matcher || !cpuset || !prio || !cpuctl || !cache) {
+            LOG_E("ScanWorker", name_ + " configs null during task processing");
+            return;
+        }
 
-=======
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
         bool affinity_changed = false;
         bool sched_changed = false;
 
-        if (auto entry = cache.lookup(task.pid, task.tid, task.thread_name, task.state)) {
-<<<<<<< HEAD
-            const MatchResult* applied = cache.get_applied_result(task.pid, task.tid);
+        if (auto entry = cache->lookup(task.pid, task.tid, task.thread_name, task.state)) {
+            auto applied = cache->get_applied_result(task.pid, task.tid);
             if (applied && is_result_equal(*applied, entry->result)) {
-                auto expected_cpus = cpuset.get_cpus_for_affinity(applied->affinity_class, applied->effective_state);
-                affinity_changed = CpuMask::is_affinity_changed(task.tid, expected_cpus);
-                int expected_prio = matcher.get_prio_value(applied->prio_class, applied->effective_state);
-                sched_changed = (expected_prio != 0 && prio.is_sched_changed(task.tid, -1, expected_prio));
-=======
-            auto applied = cache.get_applied_result(task.pid, task.tid);
-            if (applied && is_result_equal(*applied, entry->result)) {
-                auto expected_cpus = cpuset.get_cpus_for_affinity(applied->affinity_class, applied->effective_state);
+                auto expected_cpus = cpuset->get_cpus_for_affinity(applied->affinity_class, applied->effective_state);
                 affinity_changed = CpuMask::is_affinity_changed_from_status(task.tid, expected_cpus);
-                int expected_prio = matcher.get_prio_value(applied->prio_class, applied->effective_state);
-                sched_changed = prio.is_sched_changed(task.tid, expected_prio);
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
+                int expected_prio = matcher->get_prio_value(applied->prio_class, applied->effective_state);
+                sched_changed = prio->is_sched_changed(task.tid, expected_prio);
                 if (!affinity_changed && !sched_changed) {
                     LOG_T("ScanWorker", name_ + " skipped TID " + std::to_string(task.tid)
                           + " (cached, no change)");
@@ -179,31 +170,27 @@ private:
                 LOG_T("ScanWorker", name_ + " detected change for TID " + std::to_string(task.tid)
                       + (affinity_changed ? " affinity" : "") + (sched_changed ? " sched" : ""));
             }
-            cache.update_applied_result(task.pid, task.tid, entry->result);
-            cpuset.apply_with_result(task.pid, task.tid, entry->result, entry->cpuset_base);
-            prio.apply_with_result(task.pid, task.tid, entry->result);
-            cpuctl.apply_with_result(task.pid, task.tid, entry->result);
+            cache->update_applied_result(task.pid, task.tid, entry->result);
+            cpuset->apply_with_result(task.pid, task.tid, entry->result, entry->cpuset_base);
+            prio->apply_with_result(task.pid, task.tid, entry->result);
+            cpuctl->apply_with_result(task.pid, task.tid, entry->result);
             LOG_T("ScanWorker", name_ + " applied cached to TID " + std::to_string(task.tid));
         } else {
-            MatchResult result = matcher.match(task.proc_name, task.thread_name,
-                                               task.state, task.pid, task.cmdline);
-            std::string cpuctl_base = cpuctl.get_cpuctl_base(result.effective_state);
-            cache.update(task.pid, task.tid, task.thread_name, task.state,
+            MatchResult result = matcher->match(task.proc_name, task.thread_name,
+                                                task.state, task.pid, task.cmdline);
+            std::string cpuctl_base = cpuctl->get_cpuctl_base(result.effective_state);
+            cache->update(task.pid, task.tid, task.thread_name, task.state,
                          result, task.cpuset_base, cpuctl_base);
             if (result.matched) {
-                cache.update_applied_result(task.pid, task.tid, result);
+                cache->update_applied_result(task.pid, task.tid, result);
             }
-            cpuset.apply_with_result(task.pid, task.tid, result, task.cpuset_base);
-            prio.apply_with_result(task.pid, task.tid, result);
-            cpuctl.apply_with_result(task.pid, task.tid, result);
+            cpuset->apply_with_result(task.pid, task.tid, result, task.cpuset_base);
+            prio->apply_with_result(task.pid, task.tid, result);
+            cpuctl->apply_with_result(task.pid, task.tid, result);
             LOG_T("ScanWorker", name_ + " matched and applied to TID " + std::to_string(task.tid)
                   + " rule=" + result.matched_rule_name);
         }
     }
 };
 
-<<<<<<< HEAD
 #endif
-=======
-#endif
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)

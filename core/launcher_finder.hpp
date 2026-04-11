@@ -3,6 +3,8 @@
 
 #include <string>
 #include <vector>
+#include <sstream>
+#include <cctype>
 #include <cstdio>
 #include <chrono>
 #include <thread>
@@ -12,43 +14,107 @@
 #include "../utils/logger.hpp"
 
 class LauncherFinder {
+private:
+    static bool is_home_package(const std::string& pkg) {
+        std::string lower;
+        lower.reserve(pkg.size());
+        for (char c : pkg) {
+            lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return lower.find("home") != std::string::npos || 
+               lower.find("launcher") != std::string::npos;
+    }
+
+    static bool is_valid_package(const std::string& pkg) {
+        return !pkg.empty() && pkg.length() <= 128 && pkg.find(' ') == std::string::npos;
+    }
+
 public:
     static std::string find() {
         LOG_I("LauncherFinder", "Finding launcher package...");
         
         std::string result = execute_command(
-            "dumpsys activity activities 2>/dev/null | grep 'mFocusedActivity' | "
-            "head -n 1 | sed -n 's/.*\\([a-z][a-z0-9_]*\\/[a-z][a-z0-9_.]*\\).*/\\1/p'",
+            "cmd package resolve-activity -a android.intent.action.MAIN "
+            "-c android.intent.category.HOME 2>/dev/null | grep 'packageName='",
             5000);
         
+        std::vector<std::string> candidates;
         if (!result.empty()) {
-            size_t pos = result.find('/');
-            if (pos != std::string::npos) {
-                result = result.substr(0, pos);
+            std::istringstream ss(result);
+            std::string line;
+            while (std::getline(ss, line)) {
+                size_t pos = line.find("packageName=");
+                if (pos != std::string::npos) {
+                    std::string pkg = line.substr(pos + 12);
+                    while (!pkg.empty() && (pkg.back() == '\n' || pkg.back() == '\r')) {
+                        pkg.pop_back();
+                    }
+                    if (is_valid_package(pkg)) {
+                        candidates.push_back(pkg);
+                    }
+                }
             }
-            if (result.empty() || result.length() > 128 || result.find(' ') != std::string::npos) {
-                LOG_W("LauncherFinder", "Invalid package name format, using default");
-                return "com.android.launcher3";
-            }
-            LOG_I("LauncherFinder", "Found launcher via mFocusedActivity: " + result);
-            return result;
         }
         
-        result = execute_command(
-            "dumpsys package 2>/dev/null | grep -A 5 'android.intent.category.HOME' | "
-            "grep 'packageName' | head -n 1 | sed 's/.*packageName=//'",
-            5000);
-        
-        if (!result.empty()) {
-            if (result.length() > 128 || result.find(' ') != std::string::npos) {
-                LOG_W("LauncherFinder", "Invalid package name format, using default");
-                return "com.android.launcher3";
+        if (candidates.empty()) {
+            result = execute_command(
+                "cmd package query-activities -a android.intent.action.MAIN "
+                "-c android.intent.category.HOME 2>/dev/null | grep 'packageName='",
+                5000);
+            
+            if (!result.empty()) {
+                std::istringstream ss(result);
+                std::string line;
+                while (std::getline(ss, line)) {
+                    size_t pos = line.find("packageName=");
+                    if (pos != std::string::npos) {
+                        std::string pkg = line.substr(pos + 12);
+                        while (!pkg.empty() && (pkg.back() == '\n' || pkg.back() == '\r')) {
+                            pkg.pop_back();
+                        }
+                        if (is_valid_package(pkg)) {
+                            candidates.push_back(pkg);
+                        }
+                    }
+                }
             }
-            LOG_I("LauncherFinder", "Found launcher via HOME category: " + result);
-            return result;
         }
         
-        result = "com.android.launcher3";
+        std::string non_com_android_home;
+        std::string com_android_home;
+        std::string other_pkg;
+        
+        for (const auto& pkg : candidates) {
+            bool is_home = is_home_package(pkg);
+            bool starts_com_android = (pkg.find("com.android") == 0);
+            
+            if (is_home && !starts_com_android) {
+                if (non_com_android_home.empty()) {
+                    non_com_android_home = pkg;
+                }
+            } else if (is_home && starts_com_android) {
+                if (com_android_home.empty()) {
+                    com_android_home = pkg;
+                }
+            } else if (other_pkg.empty()) {
+                other_pkg = pkg;
+            }
+        }
+        
+        if (!non_com_android_home.empty()) {
+            LOG_I("LauncherFinder", "Found launcher (non-com.android home): " + non_com_android_home);
+            return non_com_android_home;
+        }
+        if (!com_android_home.empty()) {
+            LOG_I("LauncherFinder", "Found launcher (com.android home): " + com_android_home);
+            return com_android_home;
+        }
+        if (!other_pkg.empty()) {
+            LOG_I("LauncherFinder", "Found launcher (other): " + other_pkg);
+            return other_pkg;
+        }
+        
+        result = "com.miui.home";
         LOG_W("LauncherFinder", "Could not find launcher, using default: " + result);
         return result;
     }

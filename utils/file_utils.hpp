@@ -227,17 +227,6 @@ inline std::string get_process_name(int pid) {
     return comm;
 }
 
-<<<<<<< HEAD
-inline std::string get_thread_name(int pid, int tid) {
-    std::string name = read_file("/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/comm");
-    // Handle case where thread disappeared during read
-    if (name.empty()) {
-        return "[dead]";
-    }
-    return name;
-}
-
-=======
 inline std::string get_process_comm(int pid) {
     std::string comm = read_file("/proc/" + std::to_string(pid) + "/comm");
     if (comm.empty()) {
@@ -324,8 +313,25 @@ inline std::string get_thread_name(int pid, int tid) {
     return get_thread_comm(pid, tid);
 }
 
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
 inline std::string get_cgroup_path(int pid, const std::string& controller) {
+    static std::unordered_map<std::pair<int, std::string>, std::pair<std::string, int64_t>, 
+        std::hash<std::pair<int, std::string>>> cache;
+    static std::mutex cache_mutex;
+    static constexpr int64_t kCacheTTLMs = 100;
+    
+    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    
+    std::pair<int, std::string> key = {pid, controller};
+    
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        auto it = cache.find(key);
+        if (it != cache.end() && (now - it->second.second) < kCacheTTLMs) {
+            return it->second.first;
+        }
+    }
+    
     std::string cgroups = read_file("/proc/" + std::to_string(pid) + "/cgroup");
     std::istringstream iss(cgroups);
     std::string line;
@@ -333,10 +339,15 @@ inline std::string get_cgroup_path(int pid, const std::string& controller) {
         if (line.find(controller) != std::string::npos) {
             size_t pos = line.find(':');
             if (pos != std::string::npos) {
-                return line.substr(pos + 1);
+                std::string result = line.substr(pos + 1);
+                std::lock_guard<std::mutex> lock(cache_mutex);
+                cache[key] = {result, now};
+                return result;
             }
         }
     }
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    cache[key] = {"", now};
     return "";
 }
 
@@ -371,49 +382,9 @@ inline bool is_system_process(int pid) {
     return get_process_uid(pid) == 0;
 }
 
-inline std::string get_cgroup_path_cached(int pid, const std::string& controller) {
-<<<<<<< HEAD
-    // Performance optimization: cache cgroup path to avoid repeated /proc reads
-    // TTL is short (100ms) to handle process lifecycle changes
-    static std::unordered_map<int, std::pair<std::string, int64_t>> cache;
-=======
-    static std::unordered_map<std::pair<int, std::string>, std::pair<std::string, int64_t>, 
-        std::hash<std::pair<int, std::string>>> cache;
-    static std::mutex cache_mutex;
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
-    static constexpr int64_t kCacheTTLMs = 100;
-    
-    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    
-<<<<<<< HEAD
-    auto it = cache.find(pid);
-    if (it != cache.end() && (now - it->second.second) < kCacheTTLMs) {
-        if (it->second.first.find(controller) != std::string::npos) {
-            return it->second.first;
-        }
-    }
-    
-    std::string result = get_cgroup_path(pid, controller);
-    cache[pid] = {result, now};
-=======
-    std::pair<int, std::string> key = {pid, controller};
-    
-    std::lock_guard<std::mutex> lock(cache_mutex);
-    auto it = cache.find(key);
-    if (it != cache.end() && (now - it->second.second) < kCacheTTLMs) {
-        return it->second.first;
-    }
-    
-    std::string result = get_cgroup_path(pid, controller);
-    cache[key] = {result, now};
->>>>>>> fd74538 (更新: 修复CI配置，优化构建脚本 2026-04-11 22:49)
-    return result;
-}
-
 inline bool is_in_cgroup(int pid, const std::string& cgroup_name) {
     // Use cached version for better performance
-    std::string path = get_cgroup_path_cached(pid, "cpuset");
+    std::string path = get_cgroup_path(pid, "cpuset");
     return path.find(cgroup_name) != std::string::npos;
 }
 
@@ -430,7 +401,7 @@ inline ProcessState cgroup_state_to_process_state(CgroupState state) {
 }
 
 inline CgroupState get_cgroup_state(int pid) {
-    std::string cgroup = get_cgroup_path_cached(pid, "cpuset");
+    std::string cgroup = get_cgroup_path(pid, "cpuset");
     if (cgroup.empty()) {
         return CgroupState::OTHER;
     }
