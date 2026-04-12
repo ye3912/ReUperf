@@ -6,25 +6,31 @@
 #include "../config/config_types.hpp"
 #include "../utils/file_utils.hpp"
 #include "../utils/logger.hpp"
+#include "../core/cgroup_init.hpp"  // ✅ 引入全局 uclamp 支持标志
 
 class CpuctlSetter {
 public:
     CpuctlSetter() = default;
-    
+
     bool set_uclamp_max(int tid, int uclamp_max, const std::string& /*cpuctl_base*/,
                         const std::string& rule_name) {
         if (tid <= 0) {
             LOG_W("CpuctlSetter", "Invalid tid: " + std::to_string(tid));
             return false;
         }
+        
+        // ✅ 零开销防护：内核不支持 uclamp 时直接返回 true，跳过无效 IO 与日志
+        if (!CgroupInitializer::uclamp_supported) {
+            return true;
+        }
+        
         if (uclamp_max < 0 || uclamp_max > 100) {
-            LOG_W("CpuctlSetter", "Invalid uclamp_max: " + std::to_string(uclamp_max) 
+            LOG_W("CpuctlSetter", "Invalid uclamp_max: " + std::to_string(uclamp_max)
                   + " (valid range: 0-100)");
             return false;
         }
         
         std::string path = "/dev/cpuctl/ReUperf/" + rule_name;
-        
         if (!FileUtils::dir_exists(path)) {
             LOG_W("CpuctlSetter", "cpuctl group not exists: " + path);
             return false;
@@ -39,15 +45,12 @@ public:
         
         // 先写入父组 /dev/cpuctl/ReUperf/tasks
         FileUtils::write_cgroup_procs("/dev/cpuctl/ReUperf", tid);
-        
         if (!FileUtils::write_cgroup_procs(path, tid)) {
             LOG_W("CpuctlSetter", "Failed to move tid " + std::to_string(tid) + " to " + path);
-            return false;
-        }
-        
+            return false;        }
         return true;
     }
-    
+
     bool set_cpu_share(int tid, int cpu_share, const std::string& /*cpuctl_base*/,
                        const std::string& rule_name) {
         if (tid <= 0) {
@@ -55,7 +58,6 @@ public:
             return false;
         }
         // Android-specific: uses 0-1024 instead of standard cgroup 2-262144
-        // This simplified range matches Android's uclamp implementation
         if (cpu_share < 0 || cpu_share > 1024) {
             LOG_W("CpuctlSetter", "Invalid cpu_share: " + std::to_string(cpu_share)
                   + " (valid range: 0-1024, Android-specific)");
@@ -63,7 +65,6 @@ public:
         }
         
         std::string path = "/dev/cpuctl/ReUperf/" + rule_name;
-        
         if (!FileUtils::dir_exists(path)) {
             LOG_W("CpuctlSetter", "cpuctl group not exists: " + path);
             return false;
@@ -76,21 +77,18 @@ public:
         
         LOG_T("CpuctlSetter", "Set cpu.shares=" + std::to_string(cpu_share) + " for " + path);
         
-        // 先写入父组 /dev/cpuctl/ReUperf/tasks
         FileUtils::write_cgroup_procs("/dev/cpuctl/ReUperf", tid);
-        
         if (!FileUtils::write_cgroup_procs(path, tid)) {
             LOG_W("CpuctlSetter", "Failed to move tid " + std::to_string(tid) + " to " + path);
             return false;
         }
-        
         return true;
     }
-    
+
     std::string get_cpuctl_base(ProcessState /*state*/) {
         return "/dev/cpuctl";
     }
-    
+
     bool apply_with_result(int /*pid*/, int tid, const MatchResult& result) {
         if (!result.matched || !result.enable_limit) {
             return true;
@@ -98,24 +96,24 @@ public:
         
         std::string base = get_cpuctl_base(result.effective_state);
         
-        if (result.uclamp_max.has_value()) {
-            if (!set_uclamp_max(tid, result.uclamp_max.value(), 
-                                      base, result.matched_rule_name)) {
+        // uclamp 写入已内置支持检测，不支持时自动静默跳过        if (result.uclamp_max.has_value()) {
+            if (!set_uclamp_max(tid, result.uclamp_max.value(),
+                                base, result.matched_rule_name)) {
                 return false;
             }
         }
         
+        // cpu.shares 始终有效（cgroup v1 标准控制器）
         if (result.cpu_share.has_value()) {
             if (!set_cpu_share(tid, result.cpu_share.value(),
-                                     base, result.matched_rule_name)) {
+                               base, result.matched_rule_name)) {
                 return false;
             }
         }
-        
         return true;
     }
 
 private:
 };
 
-#endif
+#endif // CPUCTL_SETTER_HPP

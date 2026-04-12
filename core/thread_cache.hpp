@@ -18,14 +18,19 @@ struct ThreadCacheEntry {
     ProcessState actual_state;
     MatchResult result;
     MatchResult applied_result;  // 上次已应用的匹配结果，用于增量调度
+    
     std::string cpuset_base;
     std::string cpuctl_base;
+
+    // ✅ 新增：记录实际应用的控制器类型 ("uclamp" 或 "schedtune")
+    // 默认初始化为 "uclamp"
+    std::string applied_controller = "uclamp"; 
 };
 
 struct CacheKeyHash {
     size_t operator()(const std::pair<int, int>& k) const {
-        uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(k.first)) << 32) 
-                      | static_cast<uint64_t>(static_cast<uint32_t>(k.second));
+        uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(k.first)) << 32)
+                     | static_cast<uint64_t>(static_cast<uint32_t>(k.second));
         return std::hash<uint64_t>{}(key);
     }
 };
@@ -33,7 +38,7 @@ struct CacheKeyHash {
 class ThreadCache {
 public:
     std::optional<ThreadCacheEntry> lookup(int pid, int tid, const std::string& thread_name,
-                                            ProcessState actual_state) {
+                                           ProcessState actual_state) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto key = std::make_pair(pid, tid);
         auto it = cache_.find(key);
@@ -42,16 +47,17 @@ public:
                 it->second.actual_state == actual_state) {
                 return it->second;
             }
-            it->second.thread_name = thread_name;
-            it->second.actual_state = actual_state;
+            it->second.thread_name = thread_name;            it->second.actual_state = actual_state;
             return it->second;
         }
         return std::nullopt;
     }
 
+    // ✅ 修改：update 方法增加 controller 参数，默认 uclamp
     void update(int pid, int tid, const std::string& thread_name,
                 ProcessState actual_state, const MatchResult& result,
-                const std::string& cpuset_base, const std::string& cpuctl_base) {
+                const std::string& cpuset_base, const std::string& cpuctl_base,
+                const std::string& controller = "uclamp") {
         std::lock_guard<std::mutex> lock(mutex_);
         auto key = std::make_pair(pid, tid);
         auto it = cache_.find(key);
@@ -61,8 +67,11 @@ public:
             it->second.result = result;
             it->second.cpuset_base = cpuset_base;
             it->second.cpuctl_base = cpuctl_base;
+            it->second.applied_controller = controller; // ✅ 记录控制器
         } else {
-            cache_[key] = {pid, tid, thread_name, actual_state, result, result, cpuset_base, cpuctl_base};
+            ThreadCacheEntry entry{pid, tid, thread_name, actual_state, result, result,
+                                   cpuset_base, cpuctl_base, controller};
+            cache_[key] = std::move(entry);
         }
     }
 
@@ -87,8 +96,7 @@ public:
 
     void reset_for_pid(int pid) {
         std::lock_guard<std::mutex> lock(mutex_);
-        for (auto it = cache_.begin(); it != cache_.end(); ) {
-            if (it->first.first == pid) {
+        for (auto it = cache_.begin(); it != cache_.end(); ) {            if (it->first.first == pid) {
                 it = cache_.erase(it);
             } else {
                 ++it;
@@ -111,4 +119,4 @@ private:
     std::unordered_map<std::pair<int, int>, ThreadCacheEntry, CacheKeyHash> cache_;
 };
 
-#endif
+#endif // THREAD_CACHE_HPP
