@@ -106,12 +106,11 @@ private:
 #ifdef __ANDROID__
             // ✅ P1 改进：用重试机制替代固定延迟
             constexpr int kMaxCpusetRetries = 3;
+            std::string cpus_path = child_path + "/cpus";
             bool cpus_written = false;
             for (int i = 0; i < kMaxCpusetRetries && !cpus_written; ++i) {
                 usleep(1000 * (i + 1));  // 指数退避：1ms, 2ms, 3ms
-                if (!cpus_path.empty()) {
-                    cpus_written = FileUtils::write_file(cpus_path, cpus_str);
-                }
+                cpus_written = FileUtils::write_file(cpus_path, cpus_str);
             }
             if (!cpus_written) {
                 LOG_W("CgroupInit", "Failed to set cpus for " + child_path + " after retries");
