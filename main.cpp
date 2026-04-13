@@ -165,7 +165,6 @@ private:
     std::atomic<bool> config_changed_;
 };
 
-template<typename T>
 class PidCache {
 public:
     void update(const std::set<int>& pids) {
@@ -203,8 +202,8 @@ private:
     std::set<int> pids_;
 };
 
-using PinnedCache = PidCache<void>;
-using TopForeCache = PidCache<void>;
+using PinnedCache = PidCache;
+using TopForeCache = PidCache;
 
 void scan_and_update_rule_cache(ThreadMatcher& matcher,
                                 std::set<int>& pinned_pids,

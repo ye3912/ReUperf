@@ -478,6 +478,7 @@ private:
     // Process cache TTL: 100ms - balances between memory usage and scan frequency
     // Short TTL ensures responsive to process changes while avoiding excessive scanning
     static constexpr int64_t kProcessCacheTTLMs = 100;
+    static constexpr size_t kMaxProcessCacheSize = 500;  // Maximum cache entries
     std::unordered_map<std::string, ProcessCacheEntry> process_cache_;
     mutable std::mutex process_cache_mutex_;
 
@@ -501,6 +502,17 @@ private:
 
     void cache_process_result(const std::string& proc_name, const ProcessCacheEntry& entry) {
         std::lock_guard<std::mutex> lock(process_cache_mutex_);
+        // Evict oldest entries if cache is full
+        if (process_cache_.size() >= kMaxProcessCacheSize) {
+            auto oldest = process_cache_.begin();
+            auto now = std::chrono::steady_clock::now();
+            for (auto it = process_cache_.begin(); it != process_cache_.end(); ++it) {
+                if (it->second.timestamp < oldest->second.timestamp) {
+                    oldest = it;
+                }
+            }
+            process_cache_.erase(oldest);
+        }
         process_cache_[proc_name] = entry;
     }
 };

@@ -35,6 +35,8 @@ struct DispatchTask {
 
 class ScanWorker {
 public:
+    static constexpr size_t kMaxQueueSize = 1000;  // Maximum queue capacity
+
     explicit ScanWorker(const std::string& name)
         : name_(name), running_(false), started_(false),
           matcher_(nullptr), cpuset_(nullptr), prio_(nullptr),
@@ -91,6 +93,10 @@ public:
     void enqueue(const DispatchTask& task) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (task_queue_.size() >= kMaxQueueSize) {
+                LOG_W("ScanWorker", name_ + " queue overflow, dropping oldest task");
+                task_queue_.pop();
+            }
             task_queue_.push(task);
         }
         cv_.notify_one();
@@ -170,7 +176,7 @@ private:
             std::string controller = entry->applied_controller;
             
             // 如果之前是 uclamp 但现在不支持了（极少见，但作为回退），或者当前就是 schedtune 模式
-            if (controller == "uclamp" && !CgroupInitializer::uclamp_supported) {
+            if (controller == "uclamp" && !CgroupInitializer::uclamp_supported()) {
                 LOG_D("ScanWorker", "Uclamp unsupported, falling back to schedtune for TID " + std::to_string(task.tid));
                 controller = "schedtune";
                 // 更新缓存记录
@@ -190,7 +196,7 @@ private:
             
             std::string controller = "uclamp";
             // ✅ 初始化时决定控制器
-            if (!CgroupInitializer::uclamp_supported) {
+            if (!CgroupInitializer::uclamp_supported()) {
                 controller = "schedtune";
                 LOG_D("ScanWorker", "Uclamp unsupported, init schedtune mode for TID " + std::to_string(task.tid));
                 // 可选：如果 setter 需要明确指令，可在此修改 result 标志
