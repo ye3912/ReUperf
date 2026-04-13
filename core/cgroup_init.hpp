@@ -14,8 +14,12 @@
 
 class CgroupInitializer {
 public:
-   
-    static inline bool uclamp_supported = true;
+    
+    // Singleton pattern to avoid ODR issues with static inline in header-only design
+    static bool& uclamp_supported() {
+        static bool instance = true;
+        return instance;
+    }
 
     static bool init(const Config& config) {
         LOG_I("CgroupInit", "Starting cgroup initialization...");
@@ -31,11 +35,11 @@ public:
             init_cpuctl(config);
         } else {
             LOG_W("CgroupInit", "/dev/cpuctl not found, skipping uclamp.");
-            uclamp_supported = false;
+            uclamp_supported() = false;
         }
 
         
-        if (!uclamp_supported) {
+        if (!uclamp_supported()) {
             LOG_W("CgroupInit", "Uclamp NOT supported. Attempting schedtune fallback...");
             if (!init_schedtune(config)) {
                 LOG_W("CgroupInit", "Schedtune fallback FAILED. This is normal due to SELinux restrictions on /dev/stune. "
@@ -44,7 +48,7 @@ public:
         }
 
         LOG_I("CgroupInit", "Cgroup initialization completed. (Mode: Cpuset + Priority" + 
-              std::string(!uclamp_supported ? " + (Schedtune attempted)" : " + Uclamp") + ")");
+              std::string(!uclamp_supported() ? " + (Schedtune attempted)" : " + Uclamp") + ")");
         return true;
     }
 private:
@@ -106,11 +110,11 @@ private:
 #ifdef __ANDROID__
             // ✅ P1 改进：用重试机制替代固定延迟
             constexpr int kMaxCpusetRetries = 3;
+            std::string cpus_path = child_path + "/cpus";
             bool cpus_written = false;
-            std::string cpus_file = child_path + "/cpus";
             for (int i = 0; i < kMaxCpusetRetries && !cpus_written; ++i) {
                 usleep(1000 * (i + 1));  // 指数退避：1ms, 2ms, 3ms
-                cpus_written = FileUtils::write_file(cpus_file, cpus_str);
+                cpus_written = FileUtils::write_file(cpus_path, cpus_str);
             }
             if (!cpus_written) {
                 LOG_W("CgroupInit", "Failed to set cpus for " + child_path + " after retries");
@@ -157,21 +161,21 @@ private:
                         if (!FileUtils::write_file(uclamp_path, std::to_string(tr.uclamp_max.value()))) {
                             if (first_attempt) {
                                 LOG_W("CgroupInit", "Uclamp write failed, marking unsupported.");
-                                uclamp_supported = false;
+                                uclamp_supported() = false;
                                 first_attempt = false;
                             }
                         }
                     } else {
                         if (first_attempt) {
                             LOG_W("CgroupInit", "Uclamp file not found, marking unsupported.");
-                            uclamp_supported = false;
+                            uclamp_supported() = false;
                             first_attempt = false;
                         }
                     }
                 }
             }
         }
-        LOG_I("CgroupInit", "cpuctl init done (Uclamp: " + std::string(uclamp_supported ? "Yes" : "No") + ")");
+        LOG_I("CgroupInit", "cpuctl init done (Uclamp: " + std::string(uclamp_supported() ? "Yes" : "No") + ")");
         return true;
     }
 
@@ -205,14 +209,9 @@ private:
             }
         }
 
-        std::string reuperf_stune_path = stune_base + "/ReUperf";
-        if (!FileUtils::mkdir_recursive(reuperf_stune_path)) {
-            return false;
-        }
-
         bool any_applied = false;
         for (const auto& rule : config.sched.rules) {
-            std::string path = reuperf_stune_path + "/" + rule.name;
+            std::string path = stune_reuperf + "/" + rule.name;
             if (!FileUtils::mkdir_recursive(path)) {
                 continue;
             }

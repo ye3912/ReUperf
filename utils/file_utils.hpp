@@ -82,31 +82,39 @@ inline bool write_file(const std::string& path, const std::string& content) {
     return true;
 }
 
-namespace {
+// Singleton pattern for cache to avoid ODR issues in header-only design
     struct FileCacheEntry {
         std::string content;
         std::chrono::steady_clock::time_point timestamp;
     };
-    std::unordered_map<std::string, FileCacheEntry> file_cache;
-    std::mutex file_cache_mutex;
-    std::unordered_map<std::string, std::list<std::string>::iterator> file_cache_order;
-    std::list<std::string> file_cache_lru;
-    static constexpr int kFileCacheTTLMs = 100;
-    static constexpr size_t kMaxCacheSize = 1000;
-}
+
+    struct FileCache {
+        std::unordered_map<std::string, FileCacheEntry> cache;
+        std::mutex mutex;
+        std::unordered_map<std::string, std::list<std::string>::iterator> order;
+        std::list<std::string> lru;
+        static constexpr int kTTLMs = 100;
+        static constexpr size_t kMaxSize = 1000;
+    };
+
+    inline FileCache& get_file_cache() {
+        static FileCache instance;
+        return instance;
+    }
 
 inline std::string read_file(const std::string& path) {
     auto now = std::chrono::steady_clock::now();
+    auto& fc = get_file_cache();
     {
-        std::lock_guard<std::mutex> lock(file_cache_mutex);
-        auto it = file_cache.find(path);
-        if (it != file_cache.end() && std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - it->second.timestamp).count() < kFileCacheTTLMs) {
-            auto lru_it = file_cache_order.find(path);
-            if (lru_it != file_cache_order.end()) {
-                file_cache_lru.erase(lru_it->second);
-                file_cache_lru.push_back(path);
-                file_cache_order[path] = --file_cache_lru.end();
+        std::lock_guard<std::mutex> lock(fc.mutex);
+        auto it = fc.cache.find(path);
+        if (it != fc.cache.end() && std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - it->second.timestamp).count() < FileCache::kTTLMs) {
+            auto lru_it = fc.order.find(path);
+            if (lru_it != fc.order.end()) {
+                fc.lru.erase(lru_it->second);
+                fc.lru.push_back(path);
+                fc.order[path] = --fc.lru.end();
             }
             return it->second.content;
         }
@@ -124,16 +132,16 @@ inline std::string read_file(const std::string& path) {
     }
     
     {
-        std::lock_guard<std::mutex> lock(file_cache_mutex);
-        if (file_cache.size() >= kMaxCacheSize && !file_cache_lru.empty()) {
-            auto oldest = file_cache_lru.front();
-            file_cache_lru.pop_front();
-            file_cache.erase(oldest);
-            file_cache_order.erase(oldest);
+        std::lock_guard<std::mutex> lock(fc.mutex);
+        if (fc.cache.size() >= FileCache::kMaxSize && !fc.lru.empty()) {
+            auto oldest = fc.lru.front();
+            fc.lru.pop_front();
+            fc.cache.erase(oldest);
+            fc.order.erase(oldest);
         }
-        file_cache[path] = {content, now};
-        file_cache_lru.push_back(path);
-        file_cache_order[path] = --file_cache_lru.end();
+        fc.cache[path] = {content, now};
+        fc.lru.push_back(path);
+        fc.order[path] = --fc.lru.end();
     }
     return content;
 }
