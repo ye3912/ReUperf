@@ -58,6 +58,7 @@ private:
         auto& cfg = config.sched;
         
         cfg.enable = sched.value("enable", true);
+        cfg.case_insensitive = sched.value("case_insensitive", false);
         int refresh_interval = sched.value("refresh_interval_ms", 1000);
         if (refresh_interval <= 0) {
             LOG_W("ConfigParser", "Invalid refresh_interval_ms " + std::to_string(refresh_interval) + ", using default 1000");

@@ -54,6 +54,9 @@ static constexpr size_t kMaxRegexLength = 200;
 class ThreadMatcher {
 public:
     explicit ThreadMatcher(const Config& config) : config_(config), launcher_package_(config.launcher_package) {
+        auto regex_flags = std::regex::ECMAScript;
+        if (config_.sched.case_insensitive) regex_flags |= std::regex::icase;
+
         for (const auto& rule : config_.sched.rules) {
             CompiledProcessRule cr;
             cr.rule = rule;
@@ -72,7 +75,7 @@ public:
             }
             
             try {
-                cr.pattern = std::regex(expanded);
+                cr.pattern = std::regex(expanded, regex_flags);
             } catch (const std::regex_error&) {
                 LOG_W("ThreadMatcher", "Skip invalid process regex: " + rule.regex_str);
             }
@@ -89,7 +92,7 @@ public:
                           + " chars: " + rule.comm_regex_str);
                 } else {
                     try {
-                        cr.comm_pattern = std::regex(comm_expanded);
+                        cr.comm_pattern = std::regex(comm_expanded, regex_flags);
                         cr.has_comm_pattern = true;
                     } catch (const std::regex_error&) {
                         LOG_W("ThreadMatcher", "Skip invalid comm process regex: " + rule.comm_regex_str);
@@ -118,7 +121,7 @@ public:
                     }
                     
                     try {
-                        ctr.pattern = std::regex(tk);
+                        ctr.pattern = std::regex(tk, regex_flags);
                     } catch (const std::regex_error&) {
                         LOG_W("ThreadMatcher", "Skip invalid thread regex: " + tr.keyword);
                         continue;
