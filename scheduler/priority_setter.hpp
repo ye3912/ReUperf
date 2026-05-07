@@ -48,59 +48,6 @@ public:
         return curr;
     }
 
-    CurrentSched get_current_sched_from_file(int tid) {
-        CurrentSched curr;
-        curr.policy = -1;
-        curr.prio = 0;
-        
-        std::string sched_path = "/proc/" + std::to_string(tid) + "/sched";
-        std::string content = FileUtils::read_file(sched_path);
-        if (content.empty()) {
-            return curr;
-        }
-        
-        std::istringstream iss(content);
-        std::string line;
-        
-        while (std::getline(iss, line)) {
-            if (line.compare(0, 7, "policy") == 0) {
-                size_t pos = line.find(':');
-                if (pos != std::string::npos) {
-                    std::string value = line.substr(pos + 1);
-                    size_t start = 0;
-                    while (start < value.size() && (value[start] == ' ' || value[start] == '\t')) {
-                        start++;
-                    }
-                    try {
-                        curr.policy = std::stoi(value.substr(start));
-                    } catch (...) {
-                        curr.policy = -1;
-                    }
-                }
-            } else if (line.compare(0, 5, "prio") == 0) {
-                size_t pos = line.find(':');
-                if (pos != std::string::npos) {
-                    std::string value = line.substr(pos + 1);
-                    size_t start = 0;
-                    while (start < value.size() && (value[start] == ' ' || value[start] == '\t')) {
-                        start++;
-                    }
-                    try {
-                        curr.prio = std::stoi(value.substr(start));
-                    } catch (...) {
-                        curr.prio = 0;
-                    }
-                }
-            }
-            
-            if (curr.policy >= 0 && curr.prio > 0) {
-                break;
-            }
-        }
-        
-        return curr;
-    }
-
     static std::optional<int> expected_policy_for_priority(int expected_prio) {
         if (expected_prio == 0) {
             return std::nullopt;

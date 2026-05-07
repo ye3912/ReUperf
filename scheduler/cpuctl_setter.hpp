@@ -25,27 +25,13 @@ public:
         
         std::string path = "/dev/cpuctl/ReUperf/" + rule_name;
         
-        if (!FileUtils::dir_exists(path)) {
-            LOG_W("CpuctlSetter", "cpuctl group not exists: " + path);
-            return false;
-        }
-        
         if (!FileUtils::write_file(path + "/cpu.uclamp.max", std::to_string(uclamp_max))) {
             LOG_W("CpuctlSetter", "Failed to write cpu.uclamp.max for " + path);
             return false;
         }
         
         LOG_T("CpuctlSetter", "Set cpu.uclamp.max=" + std::to_string(uclamp_max) + " for " + path);
-        
-        // 先写入父组 /dev/cpuctl/ReUperf/tasks
-        FileUtils::write_cgroup_procs("/dev/cpuctl/ReUperf", tid);
-        
-        if (!FileUtils::write_cgroup_procs(path, tid)) {
-            LOG_W("CpuctlSetter", "Failed to move tid " + std::to_string(tid) + " to " + path);
-            return false;
-        }
-        
-        return true;
+        return migrate_thread(tid, path);
     }
     
     bool set_cpu_share(int tid, int cpu_share, const std::string& /*cpuctl_base*/,
@@ -54,8 +40,6 @@ public:
             LOG_W("CpuctlSetter", "Invalid tid: " + std::to_string(tid));
             return false;
         }
-        // Android-specific: uses 0-1024 instead of standard cgroup 2-262144
-        // This simplified range matches Android's uclamp implementation
         if (cpu_share < 0 || cpu_share > 1024) {
             LOG_W("CpuctlSetter", "Invalid cpu_share: " + std::to_string(cpu_share)
                   + " (valid range: 0-1024, Android-specific)");
@@ -64,27 +48,13 @@ public:
         
         std::string path = "/dev/cpuctl/ReUperf/" + rule_name;
         
-        if (!FileUtils::dir_exists(path)) {
-            LOG_W("CpuctlSetter", "cpuctl group not exists: " + path);
-            return false;
-        }
-        
         if (!FileUtils::write_file(path + "/cpu.shares", std::to_string(cpu_share))) {
             LOG_W("CpuctlSetter", "Failed to write cpu.shares for " + path);
             return false;
         }
         
         LOG_T("CpuctlSetter", "Set cpu.shares=" + std::to_string(cpu_share) + " for " + path);
-        
-        // 先写入父组 /dev/cpuctl/ReUperf/tasks
-        FileUtils::write_cgroup_procs("/dev/cpuctl/ReUperf", tid);
-        
-        if (!FileUtils::write_cgroup_procs(path, tid)) {
-            LOG_W("CpuctlSetter", "Failed to move tid " + std::to_string(tid) + " to " + path);
-            return false;
-        }
-        
-        return true;
+        return migrate_thread(tid, path);
     }
     
     std::string get_cpuctl_base(ProcessState /*state*/) {
@@ -116,6 +86,18 @@ public:
     }
 
 private:
+    static bool migrate_thread(int tid, const std::string& group_path) {
+        if (!FileUtils::dir_exists(group_path)) {
+            LOG_W("CpuctlSetter", "cpuctl group not exists: " + group_path);
+            return false;
+        }
+        FileUtils::write_cgroup_procs("/dev/cpuctl/ReUperf", tid);
+        if (!FileUtils::write_cgroup_procs(group_path, tid)) {
+            LOG_W("CpuctlSetter", "Failed to move tid " + std::to_string(tid) + " to " + group_path);
+            return false;
+        }
+        return true;
+    }
 };
 
 #endif

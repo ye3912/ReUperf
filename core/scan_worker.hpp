@@ -118,8 +118,22 @@ private:
     
     // 抖动抑制：记录每个 tid 的上次调度时间
     static constexpr int64_t kMinScheduleIntervalMs = 200;
+    static constexpr int64_t kScheduleCleanupIntervalMs = 5000;
+    static constexpr size_t kScheduleCleanupThreshold = 500;
     std::unordered_map<int, std::chrono::steady_clock::time_point> last_schedule_time_;
     mutable std::mutex last_schedule_mutex_;
+    size_t schedule_counter_ = 0;
+    
+    void cleanup_expired_schedule_times(const std::chrono::steady_clock::time_point& now) {
+        for (auto it = last_schedule_time_.begin(); it != last_schedule_time_.end(); ) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
+            if (elapsed > kScheduleCleanupIntervalMs) {
+                it = last_schedule_time_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
     
     // 检查是否需要跳过调度（抖动抑制）
     bool should_skip_schedule(int tid) {
@@ -133,6 +147,10 @@ private:
             }
         }
         last_schedule_time_[tid] = now;
+        if (++schedule_counter_ >= kScheduleCleanupThreshold) {
+            schedule_counter_ = 0;
+            cleanup_expired_schedule_times(now);
+        }
         return false;
     }
     

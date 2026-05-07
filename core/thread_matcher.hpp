@@ -135,235 +135,14 @@ public:
 
     MatchResult match(const std::string& proc_name, const std::string& thread_name,
                       ProcessState actual_state, int /*pid*/, const std::string& cmdline = "") {
-        MatchResult result;
-        result.effective_state = actual_state;
-
-        std::string cache_key = proc_name + "#|#" + thread_name + "#|#" + cmdline;
-        
-        if (proc_name == "[dead]") {
-            size_t bucket = get_cache_bucket(cache_key);
-            std::lock_guard<std::mutex> lock(process_cache_mutex_[bucket]);
-            process_cache_[bucket].erase(cache_key);
-            return result;
-        }
-        
-        if (auto cached = get_cached_process_result(cache_key)) {
-            result.matched = true;
-            result.matched_rule_name = cached->matched_rule_name;
-            result.affinity_class = cached->affinity_class;
-            result.prio_class = cached->prio_class;
-            result.uclamp_max = cached->uclamp_max;
-            result.cpu_share = cached->cpu_share;
-            result.enable_limit = cached->enable_limit;
-            result.effective_state = cached->effective_state;
-            LOG_T("ThreadMatcher", "Thread '" + thread_name + "' using cached rule '"
-                  + cached->matched_rule_name + "'"
-                  + ", ac=" + cached->affinity_class
-                  + ", es=" + std::to_string((int)cached->effective_state));
-            return result;
-        }
-
-        CompiledProcessRule* matched_rule = nullptr;
-
-        for (auto& cr : compiled_rules_) {
-            // regex 同时匹配 cmdline 和 proc_name（comm）
-            bool cmdline_matched = !cmdline.empty() && std::regex_search(cmdline, cr.pattern);
-            bool comm_matched = std::regex_search(proc_name, cr.pattern);
-            if (cmdline_matched || comm_matched) {
-                matched_rule = &cr;
-                break;
-            }
-
-            // 单独的 comm_regex 字段（向后兼容）
-            bool has_comm_pattern = cr.has_comm_pattern;
-            if (has_comm_pattern && std::regex_search(proc_name, cr.comm_pattern)) {
-                matched_rule = &cr;
-                break;
-            }
-
-            // Priority 3: Wildcard rule ("." or "*") as fallback
-            if (cr.rule.regex_str == "." || cr.rule.regex_str == "*" || cr.rule.regex_str.empty()) {
-                matched_rule = &cr;
-                break;
-            }
-        }
-
-        if (matched_rule) {
-            result.matched = true;
-            result.matched_rule_name = matched_rule->rule.name;
-
-            ProcessState effective_state = actual_state;
-            if (matched_rule->rule.pinned) {
-                effective_state = ProcessState::TOP;
-            } else if (matched_rule->rule.topfore && actual_state == ProcessState::FG) {
-                effective_state = ProcessState::TOP;
-            }
-            result.effective_state = effective_state;
-            result.pinned = matched_rule->rule.pinned;
-            result.topfore = matched_rule->rule.topfore;
-
-            for (const auto& ctr : matched_rule->thread_rules) {
-                if (ctr.is_main_thread_rule) {
-                    if (thread_name == proc_name) {
-                        result.affinity_class = ctr.rule.affinity_class;
-                        result.prio_class = ctr.rule.prio_class;
-                        result.uclamp_max = ctr.rule.uclamp_max;
-                        result.cpu_share = ctr.rule.cpu_share;
-                        result.enable_limit = ctr.rule.enable_limit;
-                        LOG_T("ThreadMatcher", "Thread '" + thread_name + "' matched MAIN_THREAD rule '"
-                              + matched_rule->rule.name + "' -> ac=" + ctr.rule.affinity_class
-                              + ", pc=" + ctr.rule.prio_class);
-                        break;
-                    }
-                } else {
-                    if (std::regex_search(thread_name, ctr.pattern)) {
-                        result.affinity_class = ctr.rule.affinity_class;
-                        result.prio_class = ctr.rule.prio_class;
-                        result.uclamp_max = ctr.rule.uclamp_max;
-                        result.cpu_share = ctr.rule.cpu_share;
-                        result.enable_limit = ctr.rule.enable_limit;
-                        LOG_T("ThreadMatcher", "Thread '" + thread_name + "' matched rule '"
-                              + matched_rule->rule.name + "' -> ac=" + ctr.rule.affinity_class
-                              + ", pc=" + ctr.rule.prio_class);
-                        break;
-                    }
-                }
-            }
-
-            if (result.matched && !result.matched_rule_name.empty()) {
-                ProcessCacheEntry cache_entry;
-                cache_entry.matched_rule_name = result.matched_rule_name;
-                cache_entry.affinity_class = result.affinity_class;
-                cache_entry.prio_class = result.prio_class;
-                cache_entry.uclamp_max = result.uclamp_max;
-                cache_entry.cpu_share = result.cpu_share;
-                cache_entry.enable_limit = result.enable_limit;
-                cache_entry.effective_state = result.effective_state;
-                cache_entry.pinned = result.pinned;
-                cache_entry.topfore = result.topfore;
-                cache_entry.timestamp = std::chrono::steady_clock::now();
-                cache_process_result(cache_key, cache_entry);
-            }
-        }
-
-        return result;
+        return match_impl(proc_name, thread_name, actual_state, cmdline, "Thread");
     }
 
     MatchResult match_process_only(const std::string& proc_name,
                                    const std::string& thread_name,
                                    ProcessState actual_state, int /*pid*/,
                                    const std::string& cmdline = "") {
-        MatchResult result;
-        result.effective_state = actual_state;
-
-        std::string cache_key = proc_name + "#|#" + thread_name + "#|#" + cmdline;
-        
-        if (proc_name == "[dead]") {
-            size_t bucket = get_cache_bucket(cache_key);
-            std::lock_guard<std::mutex> lock(process_cache_mutex_[bucket]);
-            process_cache_[bucket].erase(cache_key);
-            return result;
-        }
-        
-        if (auto cached = get_cached_process_result(cache_key)) {
-            result.matched = true;
-            result.matched_rule_name = cached->matched_rule_name;
-            result.affinity_class = cached->affinity_class;
-            result.prio_class = cached->prio_class;
-            result.uclamp_max = cached->uclamp_max;
-            result.cpu_share = cached->cpu_share;
-            result.enable_limit = cached->enable_limit;
-            result.effective_state = cached->effective_state;
-            result.pinned = cached->pinned;
-            result.topfore = cached->topfore;
-            LOG_T("ThreadMatcher", "Process '" + proc_name + "' using cached rule '"
-                  + cached->matched_rule_name + "'"
-                  + ", ac=" + cached->affinity_class
-                  + ", es=" + std::to_string((int)cached->effective_state));
-            return result;
-        }
-
-        CompiledProcessRule* matched_rule = nullptr;
-
-        for (auto& cr : compiled_rules_) {
-            bool cmdline_matched = !cmdline.empty() && std::regex_search(cmdline, cr.pattern);
-            bool comm_matched = std::regex_search(proc_name, cr.pattern);
-            if (cmdline_matched || comm_matched) {
-                matched_rule = &cr;
-                break;
-            }
-
-            bool has_comm_pattern = cr.has_comm_pattern;
-            if (has_comm_pattern && std::regex_search(proc_name, cr.comm_pattern)) {
-                matched_rule = &cr;
-                break;
-            }
-
-            if (cr.rule.regex_str == "." || cr.rule.regex_str == "*" || cr.rule.regex_str.empty()) {
-                matched_rule = &cr;
-                break;
-            }
-        }
-
-        if (matched_rule) {
-            result.matched = true;
-            result.matched_rule_name = matched_rule->rule.name;
-
-            ProcessState effective_state = actual_state;
-            if (matched_rule->rule.pinned) {
-                effective_state = ProcessState::TOP;
-            } else if (matched_rule->rule.topfore && actual_state == ProcessState::FG) {
-                effective_state = ProcessState::TOP;
-            }
-            result.effective_state = effective_state;
-            result.pinned = matched_rule->rule.pinned;
-            result.topfore = matched_rule->rule.topfore;
-
-            for (const auto& ctr : matched_rule->thread_rules) {
-                if (ctr.is_main_thread_rule) {
-                    if (thread_name == proc_name) {
-                        result.affinity_class = ctr.rule.affinity_class;
-                        result.prio_class = ctr.rule.prio_class;
-                        result.uclamp_max = ctr.rule.uclamp_max;
-                        result.cpu_share = ctr.rule.cpu_share;
-                        result.enable_limit = ctr.rule.enable_limit;
-                        LOG_T("ThreadMatcher", "Process '" + proc_name + "' matched MAIN_THREAD rule '"
-                              + matched_rule->rule.name + "' -> ac=" + ctr.rule.affinity_class
-                              + ", pc=" + ctr.rule.prio_class);
-                        break;
-                    }
-                } else {
-                    if (std::regex_search(thread_name, ctr.pattern)) {
-                        result.affinity_class = ctr.rule.affinity_class;
-                        result.prio_class = ctr.rule.prio_class;
-                        result.uclamp_max = ctr.rule.uclamp_max;
-                        result.cpu_share = ctr.rule.cpu_share;
-                        result.enable_limit = ctr.rule.enable_limit;
-                        LOG_T("ThreadMatcher", "Process '" + proc_name + "' matched rule '"
-                              + matched_rule->rule.name + "' -> ac=" + ctr.rule.affinity_class
-                              + ", pc=" + ctr.rule.prio_class);
-                        break;
-                    }
-                }
-            }
-
-            if (result.matched && !result.matched_rule_name.empty()) {
-                ProcessCacheEntry cache_entry;
-                cache_entry.matched_rule_name = result.matched_rule_name;
-                cache_entry.affinity_class = result.affinity_class;
-                cache_entry.prio_class = result.prio_class;
-                cache_entry.uclamp_max = result.uclamp_max;
-                cache_entry.cpu_share = result.cpu_share;
-                cache_entry.enable_limit = result.enable_limit;
-                cache_entry.effective_state = result.effective_state;
-                cache_entry.pinned = result.pinned;
-                cache_entry.topfore = result.topfore;
-                cache_entry.timestamp = std::chrono::steady_clock::now();
-                cache_process_result(cache_key, cache_entry);
-            }
-        }
-
-        return result;
+        return match_impl(proc_name, thread_name, actual_state, cmdline, "Process");
     }
 
     std::vector<int> get_cpus_for_affinity(const std::string& affinity_class,
@@ -439,6 +218,121 @@ private:
     Config config_;
     std::string launcher_package_;
     std::vector<CompiledProcessRule> compiled_rules_;
+
+    MatchResult match_impl(const std::string& proc_name, const std::string& thread_name,
+                           ProcessState actual_state, const std::string& cmdline,
+                           const char* log_label) {
+        MatchResult result;
+        result.effective_state = actual_state;
+
+        std::string cache_key = proc_name + "#|#" + thread_name + "#|#" + cmdline;
+        
+        if (proc_name == "[dead]") {
+            size_t bucket = get_cache_bucket(cache_key);
+            std::lock_guard<std::mutex> lock(process_cache_mutex_[bucket]);
+            process_cache_[bucket].erase(cache_key);
+            return result;
+        }
+        
+        if (auto cached = get_cached_process_result(cache_key)) {
+            result.matched = true;
+            result.matched_rule_name = cached->matched_rule_name;
+            result.affinity_class = cached->affinity_class;
+            result.prio_class = cached->prio_class;
+            result.uclamp_max = cached->uclamp_max;
+            result.cpu_share = cached->cpu_share;
+            result.enable_limit = cached->enable_limit;
+            result.effective_state = cached->effective_state;
+            result.pinned = cached->pinned;
+            result.topfore = cached->topfore;
+            LOG_T("ThreadMatcher", std::string(log_label) + " '" + thread_name + "' using cached rule '"
+                  + cached->matched_rule_name + "'"
+                  + ", ac=" + cached->affinity_class
+                  + ", es=" + std::to_string((int)cached->effective_state));
+            return result;
+        }
+
+        CompiledProcessRule* matched_rule = nullptr;
+
+        for (auto& cr : compiled_rules_) {
+            bool cmdline_matched = !cmdline.empty() && std::regex_search(cmdline, cr.pattern);
+            bool comm_matched = std::regex_search(proc_name, cr.pattern);
+            if (cmdline_matched || comm_matched) {
+                matched_rule = &cr;
+                break;
+            }
+
+            if (cr.has_comm_pattern && std::regex_search(proc_name, cr.comm_pattern)) {
+                matched_rule = &cr;
+                break;
+            }
+
+            if (cr.rule.regex_str == "." || cr.rule.regex_str == "*" || cr.rule.regex_str.empty()) {
+                matched_rule = &cr;
+                break;
+            }
+        }
+
+        if (matched_rule) {
+            result.matched = true;
+            result.matched_rule_name = matched_rule->rule.name;
+
+            ProcessState effective_state = actual_state;
+            if (matched_rule->rule.pinned) {
+                effective_state = ProcessState::TOP;
+            } else if (matched_rule->rule.topfore && actual_state == ProcessState::FG) {
+                effective_state = ProcessState::TOP;
+            }
+            result.effective_state = effective_state;
+            result.pinned = matched_rule->rule.pinned;
+            result.topfore = matched_rule->rule.topfore;
+
+            for (const auto& ctr : matched_rule->thread_rules) {
+                if (ctr.is_main_thread_rule) {
+                    if (thread_name == proc_name) {
+                        result.affinity_class = ctr.rule.affinity_class;
+                        result.prio_class = ctr.rule.prio_class;
+                        result.uclamp_max = ctr.rule.uclamp_max;
+                        result.cpu_share = ctr.rule.cpu_share;
+                        result.enable_limit = ctr.rule.enable_limit;
+                        LOG_T("ThreadMatcher", std::string(log_label) + " '" + thread_name + "' matched MAIN_THREAD rule '"
+                              + matched_rule->rule.name + "' -> ac=" + ctr.rule.affinity_class
+                              + ", pc=" + ctr.rule.prio_class);
+                        break;
+                    }
+                } else {
+                    if (std::regex_search(thread_name, ctr.pattern)) {
+                        result.affinity_class = ctr.rule.affinity_class;
+                        result.prio_class = ctr.rule.prio_class;
+                        result.uclamp_max = ctr.rule.uclamp_max;
+                        result.cpu_share = ctr.rule.cpu_share;
+                        result.enable_limit = ctr.rule.enable_limit;
+                        LOG_T("ThreadMatcher", std::string(log_label) + " '" + thread_name + "' matched rule '"
+                              + matched_rule->rule.name + "' -> ac=" + ctr.rule.affinity_class
+                              + ", pc=" + ctr.rule.prio_class);
+                        break;
+                    }
+                }
+            }
+
+            if (result.matched && !result.matched_rule_name.empty()) {
+                ProcessCacheEntry cache_entry;
+                cache_entry.matched_rule_name = result.matched_rule_name;
+                cache_entry.affinity_class = result.affinity_class;
+                cache_entry.prio_class = result.prio_class;
+                cache_entry.uclamp_max = result.uclamp_max;
+                cache_entry.cpu_share = result.cpu_share;
+                cache_entry.enable_limit = result.enable_limit;
+                cache_entry.effective_state = result.effective_state;
+                cache_entry.pinned = result.pinned;
+                cache_entry.topfore = result.topfore;
+                cache_entry.timestamp = std::chrono::steady_clock::now();
+                cache_process_result(cache_key, cache_entry);
+            }
+        }
+
+        return result;
+    }
 
     std::string expand_process_regex(const std::string& regex_str,
                                      const std::string& launcher,
@@ -550,6 +444,7 @@ private:
             if (elapsed_ms < ttl) {
                 return it->second;
             }
+            process_cache_[bucket].erase(it);
         }
         return std::nullopt;
     }

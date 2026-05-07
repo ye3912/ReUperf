@@ -80,6 +80,10 @@ public:
     }
 
     void log(LogLevel level, const std::string& tag, const std::string& msg) { 
+        log(level, tag, msg, structured_logging_);
+    }
+
+    void log(LogLevel level, const std::string& tag, const std::string& msg, bool structured) { 
         std::lock_guard<std::mutex> lock(mutex_);
 
         LogLevel effective_level = get_module_level(tag);
@@ -100,7 +104,7 @@ public:
             now.time_since_epoch()) % 1000;
 
         std::string output;
-        if (structured_logging_) {
+        if (structured) {
             json j;
             j["timestamp"] = get_timestamp_str(time, ms);
             j["level"] = level_str;
@@ -193,11 +197,11 @@ private:
 #define LOG_D(tag, msg) Logger::instance().d(tag, msg)
 #define LOG_T(tag, msg) Logger::instance().t(tag, msg)
 
-// 新增宏定义：结构化日志
-#define LOG_S_E(tag, msg) Logger::instance().enable_structured_logging(true); Logger::instance().e(tag, msg); Logger::instance().enable_structured_logging(false)
-#define LOG_S_W(tag, msg) Logger::instance().enable_structured_logging(true); Logger::instance().w(tag, msg); Logger::instance().enable_structured_logging(false)
-#define LOG_S_I(tag, msg) Logger::instance().enable_structured_logging(true); Logger::instance().i(tag, msg); Logger::instance().enable_structured_logging(false)
-#define LOG_S_D(tag, msg) Logger::instance().enable_structured_logging(true); Logger::instance().d(tag, msg); Logger::instance().enable_structured_logging(false)
-#define LOG_S_T(tag, msg) Logger::instance().enable_structured_logging(true); Logger::instance().t(tag, msg); Logger::instance().enable_structured_logging(false)
+// 结构化日志宏（线程安全：直接传递 structured 参数，无需切换全局状态）
+#define LOG_S_E(tag, msg) Logger::instance().log(LogLevel::ERR, tag, msg, true)
+#define LOG_S_W(tag, msg) Logger::instance().log(LogLevel::WARN, tag, msg, true)
+#define LOG_S_I(tag, msg) Logger::instance().log(LogLevel::INFO, tag, msg, true)
+#define LOG_S_D(tag, msg) Logger::instance().log(LogLevel::DEBUG, tag, msg, true)
+#define LOG_S_T(tag, msg) Logger::instance().log(LogLevel::TRACE, tag, msg, true)
 
 #endif

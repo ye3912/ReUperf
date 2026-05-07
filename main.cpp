@@ -192,11 +192,6 @@ public:
         return pids_;
     }
 
-    std::set<int> snapshot() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return pids_;
-    }
-
     void remove_pid(int pid) {
         std::lock_guard<std::mutex> lock(mutex_);
         pids_.erase(pid);
@@ -236,7 +231,15 @@ void scan_and_update_rule_cache(ThreadMatcher& matcher,
 
         std::string cmdline = FileUtils::get_process_cmdline(pid);
 
-        MatchResult result = matcher.match_process_only(proc_name, proc_name, ProcessState::BG, pid, cmdline);
+        ProcessState actual_state = ProcessState::BG;
+        FileUtils::CgroupState cg_state = FileUtils::get_cgroup_state(pid);
+        if (cg_state == FileUtils::CgroupState::TOP) {
+            actual_state = ProcessState::TOP;
+        } else if (cg_state == FileUtils::CgroupState::FG) {
+            actual_state = ProcessState::FG;
+        }
+
+        MatchResult result = matcher.match_process_only(proc_name, proc_name, actual_state, pid, cmdline);
 
         if (!result.matched) continue;
 
@@ -642,8 +645,8 @@ int main(int /*argc*/, char* argv[]) {
             dispatch_topfore_to_workers(workers, topfore_pids, processed);
             dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
         } else {
-            dispatch_pinned_to_workers(workers, pinned_cache->snapshot(), processed);
-            dispatch_topfore_to_workers(workers, topfore_cache->snapshot(), processed);
+            dispatch_pinned_to_workers(workers, pinned_cache->get(), processed);
+            dispatch_topfore_to_workers(workers, topfore_cache->get(), processed);
             dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
         }
         
@@ -654,11 +657,6 @@ int main(int /*argc*/, char* argv[]) {
         }
         
         std::this_thread::sleep_for(std::chrono::milliseconds(current_sleep_ms));
-        
-        for (auto& w : workers) {
-            (void)w;
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
         } catch (const std::exception& e) {
             LOG_E("Main", "Exception in main loop: " + std::string(e.what()));
         } catch (...) {

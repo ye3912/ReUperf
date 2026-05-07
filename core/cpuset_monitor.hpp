@@ -2,15 +2,10 @@
 #define CPUSET_MONITOR_HPP
 
 #include <string>
-#include <vector>
 #include <thread>
 #include <atomic>
 #include <functional>
-#include <map>
-#include <unordered_set>
-#include <sstream>
 #include <cerrno>
-#include <fcntl.h>
 #include <sys/inotify.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -49,7 +44,7 @@ public:
             inotify_fd_ = -1;
             return false;
         }
-        watch_fds_["/proc"] = wd;
+
         LOG_D("ProcMonitor", "Watching: /proc");
         
         running_ = true;
@@ -93,9 +88,6 @@ private:
     int inotify_fd_;
     std::thread thread_;
     std::function<void(int pid)> on_process_change_;
-    
-    std::map<std::string, int> watch_fds_;
-    std::unordered_set<int> tracked_pids_;
     
     void monitor_loop() {
         constexpr size_t EVENT_SIZE = sizeof(struct inotify_event);
