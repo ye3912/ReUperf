@@ -6,13 +6,27 @@
 #include <set>
 #include <cstdint>
 #include <fstream>
-#ifdef __linux__
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/inotify.h>
-#include <poll.h>
-#endif
+#if defined(__linux__) && !defined(USE_CAPABILITY_STUB)
+    #include <unistd.h>
+    #include <sys/stat.h>
+    #include <sys/types.h>
+    #include <sys/inotify.h>
+    #include <poll.h>
+    #include <sys/capability.h>
+#else
+    // Non-Linux platforms or cross-compile without libcap: provide stub for capability functions
+#include <cstdint>
+    #define CAP_SET 1
+    #define CAP_CLEAR 0
+    #define CAP_EFFECTIVE 1
+    #define CAP_SYS_NICE 23
+    #define CAP_SYS_ADMIN 21
+    typedef int cap_flag_value_t;
+    struct cap_t { void* data; };
+    inline cap_t* cap_get_proc() { return nullptr; }
+    inline int cap_free(cap_t*) { return 0; }
+    inline int cap_get_flag(cap_t*, int, cap_flag_value_t, cap_flag_value_t*) { return 0; }
+    #endif
 #include <memory>
 #include <ctime>
 #include <regex>
@@ -165,6 +179,7 @@ private:
     std::atomic<bool> config_changed_;
 };
 
+template<typename T>
 class PidCache {
 public:
     void update(const std::set<int>& pids) {
@@ -173,11 +188,6 @@ public:
     }
 
     std::set<int> get() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return pids_;
-    }
-
-    std::set<int> snapshot() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return pids_;
     }
@@ -202,8 +212,8 @@ private:
     std::set<int> pids_;
 };
 
-using PinnedCache = PidCache;
-using TopForeCache = PidCache;
+using PinnedCache = PidCache<void>;
+using TopForeCache = PidCache<void>;
 
 void scan_and_update_rule_cache(ThreadMatcher& matcher,
                                 std::set<int>& pinned_pids,
@@ -221,7 +231,15 @@ void scan_and_update_rule_cache(ThreadMatcher& matcher,
 
         std::string cmdline = FileUtils::get_process_cmdline(pid);
 
-        MatchResult result = matcher.match_process_only(proc_name, proc_name, ProcessState::BG, pid, cmdline);
+        ProcessState actual_state = ProcessState::BG;
+        FileUtils::CgroupState cg_state = FileUtils::get_cgroup_state(pid);
+        if (cg_state == FileUtils::CgroupState::TOP) {
+            actual_state = ProcessState::TOP;
+        } else if (cg_state == FileUtils::CgroupState::FG) {
+            actual_state = ProcessState::FG;
+        }
+
+        MatchResult result = matcher.match_process_only(proc_name, proc_name, actual_state, pid, cmdline);
 
         if (!result.matched) continue;
 
@@ -365,6 +383,27 @@ int main(int /*argc*/, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
     std::signal(SIGPIPE, SIG_IGN);
+    
+    // 权限检查：检查是否具备必要的 capabilities
+    #ifdef __linux__
+    {
+        cap_t* caps = cap_get_proc();
+        if (caps != nullptr) {
+            cap_flag_value_t sys_nice = CAP_CLEAR;
+            cap_flag_value_t sys_admin = CAP_CLEAR;
+            cap_get_flag(caps, CAP_SYS_NICE, CAP_EFFECTIVE, &sys_nice);
+            cap_get_flag(caps, CAP_SYS_ADMIN, CAP_EFFECTIVE, &sys_admin);
+            cap_free(caps);
+            
+            if (sys_nice != CAP_SET) {
+                LOG_W("Main", "Missing CAP_SYS_NICE - priority scheduling may not work");
+            }
+            if (sys_admin != CAP_SET) {
+                LOG_W("Main", "Missing CAP_SYS_ADMIN - cgroup operations may not work");
+            }
+        }
+    }
+    #endif
     
     ensure_data_dir();
     
@@ -606,17 +645,18 @@ int main(int /*argc*/, char* argv[]) {
             dispatch_topfore_to_workers(workers, topfore_pids, processed);
             dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
         } else {
-            dispatch_pinned_to_workers(workers, pinned_cache->snapshot(), processed);
-            dispatch_topfore_to_workers(workers, topfore_cache->snapshot(), processed);
+            dispatch_pinned_to_workers(workers, pinned_cache->get(), processed);
+            dispatch_topfore_to_workers(workers, topfore_cache->get(), processed);
             dispatch_fg_top_to_workers(workers, *scanner_ptr, processed);
         }
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(highspeed_ms));
-        
-        for (auto& w : workers) {
-            (void)w;
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // 动态调整睡眠时间：根据任务队列长度调整
+        int current_sleep_ms = highspeed_ms;
+        if (!processed.empty()) {
+            current_sleep_ms = std::max(highspeed_ms / 2, 10);
         }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(current_sleep_ms));
         } catch (const std::exception& e) {
             LOG_E("Main", "Exception in main loop: " + std::string(e.what()));
         } catch (...) {
