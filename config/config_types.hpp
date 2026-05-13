@@ -52,6 +52,7 @@ struct SchedConfig {
     bool enable = true;
     int refresh_interval_ms = 1000;
     int highspeed_sched_ms = 100;
+    bool case_insensitive = false;
     LogConfig log;
     
     std::map<std::string, std::vector<int>> cpumask;

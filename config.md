@@ -15,6 +15,7 @@
   "modules": {
     "sched": {
       "enable": true,
+      "case_insensitive": false,
       "refresh_interval_ms": 1000,
       "highspeed_sched_ms": 100,
       "log": {
@@ -35,6 +36,7 @@
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `enable` | bool | true | 启用调度模块 |
+| `case_insensitive` | bool | false | 正则匹配忽略大小写，开启后 `surfaceflinger` 可匹配 `SurfaceFlinger` |
 | `refresh_interval_ms` | int | 1000 | 低频扫描间隔（毫秒），扫描 fg/top 进程并更新缓存 |
 | `highspeed_sched_ms` | int | 100 | 高频调度间隔（毫秒），调度 pinned/topfore 进程 |
 | `log.level` | string | "info" | 日志级别：err/warn/info/debug/trace |
